@@ -63,6 +63,10 @@ grep -Fqx 'kgb_cw_hltv_rcon_enabled 0' \
 	"$TEST_ROOT_TWO/addons/amxmodx/configs/kgb_clan_war_hltv.cfg"
 grep -Fqx 'kgb_cw_sql_enabled 0' \
 	"$TEST_ROOT_TWO/addons/amxmodx/configs/kgb_clan_war_sql.cfg"
+grep -Fqx 'kgb_cw_display_name "KGB Clan War"' \
+	"$TEST_ROOT_TWO/addons/amxmodx/configs/kgb_clan_war.cfg"
+grep -Fqx 'kgb_cw_chat_prefix "[KGB CW]"' \
+	"$TEST_ROOT_TWO/addons/amxmodx/configs/kgb_clan_war.cfg"
 grep -Fqx 'mp_roundtime 1.75' "$TEST_ROOT_TWO/kgb_gamemode.cfg"
 grep -Fqx 'mp_friendlyfire 1' "$TEST_ROOT_TWO/kgb_gamemode.cfg"
 grep -Fqx 'mp_autoteambalance 0' "$TEST_ROOT_TWO/kgb_gamemode.cfg"

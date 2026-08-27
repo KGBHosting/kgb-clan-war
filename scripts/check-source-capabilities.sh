@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CORE="$ROOT_DIR/src/kgb_clan_war.sma"
 HLTV="$ROOT_DIR/src/kgb_clan_war_hltv.sma"
 SQL="$ROOT_DIR/src/kgb_clan_war_sql.sma"
+CORE_CONFIG="$ROOT_DIR/configs/kgb_clan_war.cfg.example"
+README="$ROOT_DIR/README.md"
 
 require_string() {
 	local file="$1"
@@ -20,7 +22,7 @@ for source in "$CORE" "$HLTV" "$SQL"; do
 		printf 'Missing required source: %s\n' "${source#"$ROOT_DIR/"}" >&2
 		exit 1
 	}
-	require_string "$source" '#define PLUGIN_VERSION "1.0.0"'
+	require_string "$source" '#define PLUGIN_VERSION "0.2.0"'
 	require_string "$source" 'SPDX-License-Identifier: GPL-3.0-or-later'
 done
 
@@ -36,7 +38,8 @@ for cvar in \
 	kgb_cw_overtime_max_cycles kgb_cw_team_a_name kgb_cw_team_b_name \
 	kgb_cw_team_a_tag kgb_cw_team_b_tag kgb_cw_map_count kgb_cw_knife_vote \
 	kgb_cw_pug_mode kgb_cw_set_hostname kgb_cw_set_password \
-	kgb_cw_client_demos kgb_cw_screenshots kgb_cw_file_stats; do
+	kgb_cw_client_demos kgb_cw_screenshots kgb_cw_file_stats \
+	kgb_cw_display_name kgb_cw_chat_prefix; do
 	require_string "$CORE" "\"$cvar\""
 done
 require_string "$CORE" 'kgb_cw_event'
@@ -50,6 +53,31 @@ require_string "$CORE" 'if (!file_exists(path))'
 require_string "$CORE" 'Required %s config file does not exist: %s'
 require_string "$CORE" 'g_State != STATE_KNIFE_VOTE || g_KnifeDecisionMade'
 require_string "$CORE" 'reset_ready_players(); g_KnifeDecisionMade = false'
+require_string "$CORE" '#define DEFAULT_DISPLAY_NAME "KGB Clan War"'
+require_string "$CORE" '#define DEFAULT_CHAT_PREFIX "[KGB CW]"'
+require_string "$CORE" 'valid_display_token(value, MAX_DISPLAY_NAME)'
+require_string "$CORE" 'valid_display_token(value, MAX_CHAT_PREFIX)'
+require_string "$CORE" 'copy(g_DisplayName, charsmax(g_DisplayName), DEFAULT_DISPLAY_NAME)'
+require_string "$CORE" 'copy(g_ChatPrefix, charsmax(g_ChatPrefix), DEFAULT_CHAT_PREFIX)'
+require_string "$CORE" 'new menu = menu_create(g_DisplayName, "menu_control_handler")'
+require_string "$CORE" 'formatex(title, charsmax(title), "%s: choose side", g_DisplayName)'
+require_string "$CORE" 'new menu = menu_create(title, "menu_knife_vote_handler")'
+require_string "$CORE" 'show_hudmessage(0, "%s %s", g_ChatPrefix, message)'
+require_string "$CORE_CONFIG" 'kgb_cw_display_name "KGB Clan War"'
+require_string "$CORE_CONFIG" 'kgb_cw_chat_prefix "[KGB CW]"'
+require_string "$README" '`v0.2.0` is the next qualification candidate.'
+require_string "$README" 'KGB Hosting may install, run, modify, and redistribute it'
+require_string "$README" 'does not grant trademark rights'
+
+if grep -Eq 'client_print.*"\[KGB CW\]|console_print.*"\[KGB CW\]|menu_create\("' "$CORE"; then
+	printf 'Hardcoded customer-visible core branding bypasses the validated CVARs.\n' >&2
+	exit 1
+fi
+
+if grep -Fq 'show_hudmessage(0, "%s", message)' "$CORE"; then
+	printf 'HUD announcements bypass the validated branding CVARs.\n' >&2
+	exit 1
+fi
 
 require_string "$HLTV" '#include <sockets>'
 require_string "$HLTV" '"kgb_cw_hltv_enabled", "0"'
