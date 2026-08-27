@@ -211,8 +211,15 @@ The installer creates
 | `kgb_cw_screenshots` | `0` | Request halftime/final screenshots. |
 | `kgb_cw_scoreid_screenshots` | `0` | Allow the admin-only detailed score/SteamID MOTD plus one screenshot request. |
 | `kgb_cw_screenshot_on_stop` | `0` | Apply enabled score/identity screenshot workflows to an administrator stop. |
-| `kgb_cw_file_stats` | `1` | Write lifecycle rows and connected-player half deltas/current-scoreboard K-D. |
+| `kgb_cw_file_stats` | `0` | Opt in to local lifecycle rows and connected-player identity/half-delta/current-scoreboard K-D records. |
 | `kgb_cw_hud_announcements` | `1` | Show match HUD announcements. |
+
+When a live series starts, the plugin freezes the complete match policy in an
+immutable in-memory manifest (and a validated cross-map envelope for map two).
+Changing these CVARs during a live match does not change that match; the new
+values apply to the next series. This includes scoring, ready/swap/overtime,
+playout, screenshots/file statistics, phase configs, environment changes,
+client demos, and HLTV recording policy.
 
 Brand values are trimmed and limited to visible ASCII: 47 bytes for the display
 name and 23 bytes for the chat prefix. Empty, overlong, or unsafe values
@@ -267,22 +274,35 @@ in AMX Mod X `sql.cfg`, then set `kgb_cw_sql_enabled 1`. Player rows include
 Steam authentication IDs, map number, current names, team, kills, deaths, and
 headshots. The `(match_uid, map_number, auth_id)` key preserves map-one totals
 when map two starts and records connected zero-event players on each map.
-Each persistence attempt adds only counters not already queued for that player
-slot; reconnecting with the same SteamID therefore accumulates another session
-into the same map row without replacing earlier totals.
+Player writes use acknowledged absolute totals and idempotent maximum upserts.
+An asynchronous failure leaves the acknowledged baseline unchanged and is
+retried; overlapping disconnect/end callbacks can complete in either order
+without adding twice or discarding the larger total. Reconnecting with the same
+SteamID therefore accumulates another session in the same map row without
+replacing earlier totals.
 
-The plugin detects the exact public v0.2.0 player table and upgrades it by
+The plugin detects only the exact public v0.2.0 player table, the final v0.3.0
+shape, and the known interrupted v0.2.0 migration state. It upgrades v0.2.0 by
 adding `map_number` (existing rows become map one) and changing the primary key
-to `(match_uid, map_number, auth_id)`. That automated DDL is MySQL/MariaDB-only.
+to `(match_uid, map_number, auth_id)` and fails closed for every unknown shape.
+That automated DDL is MySQL/MariaDB-only.
 The SQL account needs the table create/alter and normal read/write privileges
 used by the plugin. Operators who require a reviewed maintenance-window change
 can instead stop the server and run
-[`sql/migrate-v0.2.0-to-v0.3.0.sql`](sql/migrate-v0.2.0-to-v0.3.0.sql) exactly
-once before starting v0.3.0. Other SQLX drivers are not a supported v0.3.0
+[`sql/migrate-v0.2.0-to-v0.3.0.sql`](sql/migrate-v0.2.0-to-v0.3.0.sql)
+before starting v0.3.0. The script is idempotent and refuses unknown table
+shapes; run it with a maintenance account allowed to create, execute, and drop
+a temporary stored procedure as well as alter the player table. Other SQLX
+drivers are not a supported v0.3.0
 configuration.
 
 Operators are responsible for an appropriate notice, lawful basis, access
-control, retention period, and deletion process for that personal data.
+control, retention period, and deletion process for that personal data. The
+same applies when `kgb_cw_file_stats 1` is enabled: local files beneath
+`addons/amxmodx/data/kgb_clan_war/` contain player names, Steam authentication
+IDs, user IDs, teams, and scoreboard/half statistics. They are not rotated or
+deleted automatically; operators must restrict filesystem access and enforce a
+retention/deletion policy. Local file statistics ship disabled.
 
 The core and HLTV integration load
 `addons/amxmodx/data/lang/kgb_clan_war.txt`. The repository ships fresh English

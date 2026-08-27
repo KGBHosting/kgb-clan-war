@@ -109,6 +109,8 @@ grep -Fqx 'kgb_cw_time_limit_finish_round 1' \
 	"$TEST_ROOT_TWO/addons/amxmodx/configs/kgb_clan_war.cfg"
 grep -Fqx 'kgb_cw_screenshot_on_stop 0' \
 	"$TEST_ROOT_TWO/addons/amxmodx/configs/kgb_clan_war.cfg"
+grep -Fqx 'kgb_cw_file_stats 0' \
+	"$TEST_ROOT_TWO/addons/amxmodx/configs/kgb_clan_war.cfg"
 grep -Fqx 'competitive|Competitive MR15' \
 	"$TEST_ROOT_TWO/addons/amxmodx/configs/kgb_clan_war_presets.ini"
 grep -Fqx '[de]' "$TEST_ROOT_TWO/addons/amxmodx/data/lang/kgb_clan_war.txt"

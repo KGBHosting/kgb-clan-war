@@ -52,6 +52,13 @@ VALUES
 SQL
 
 mysql_exec < "$ROOT_DIR/sql/migrate-v0.2.0-to-v0.3.0.sql"
+# The operator migration is safe to execute again after a completed upgrade.
+mysql_exec < "$ROOT_DIR/sql/migrate-v0.2.0-to-v0.3.0.sql"
+# Recover the one known interrupted state from the former two-statement flow.
+mysql_exec <<'SQL'
+ALTER TABLE kgb_cw_players DROP PRIMARY KEY, ADD PRIMARY KEY (match_uid, auth_id);
+SQL
+mysql_exec < "$ROOT_DIR/sql/migrate-v0.2.0-to-v0.3.0.sql"
 
 primary_columns="$(mysql_exec <<'SQL'
 SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',')
@@ -69,19 +76,19 @@ WHERE match_uid='series-1' AND auth_id='STEAM_0:1:111';
 SQL
 )" = '1:5:1:0'
 
-# Exercise the same delta-upsert form used by the plugin: reconnect deltas add
-# to map one, while map two is an independent row and zero-event players remain.
+# Exercise the same acknowledged absolute-total upsert used by the plugin.
+# Replaying either callback is idempotent, while map two remains independent.
 mysql_exec <<'SQL'
 INSERT INTO kgb_cw_players
     (match_uid,map_number,auth_id,player_name,last_team,kills,deaths,headshots,updated_at)
 VALUES
-    ('series-1',1,'STEAM_0:1:111','Player One','T',3,2,1,CURRENT_TIMESTAMP)
+    ('series-1',1,'STEAM_0:1:111','Player One','T',8,3,1,CURRENT_TIMESTAMP)
 ON DUPLICATE KEY UPDATE
     player_name=VALUES(player_name),
     last_team=VALUES(last_team),
-    kills=kills+VALUES(kills),
-    deaths=deaths+VALUES(deaths),
-    headshots=headshots+VALUES(headshots),
+    kills=GREATEST(kills,VALUES(kills)),
+    deaths=GREATEST(deaths,VALUES(deaths)),
+    headshots=GREATEST(headshots,VALUES(headshots)),
     updated_at=CURRENT_TIMESTAMP;
 
 INSERT INTO kgb_cw_players
@@ -92,9 +99,9 @@ VALUES
 ON DUPLICATE KEY UPDATE
     player_name=VALUES(player_name),
     last_team=VALUES(last_team),
-    kills=kills+VALUES(kills),
-    deaths=deaths+VALUES(deaths),
-    headshots=headshots+VALUES(headshots),
+    kills=GREATEST(kills,VALUES(kills)),
+    deaths=GREATEST(deaths,VALUES(deaths)),
+    headshots=GREATEST(headshots,VALUES(headshots)),
     updated_at=CURRENT_TIMESTAMP;
 SQL
 
@@ -113,4 +120,51 @@ WHERE match_uid='series-1' AND map_number=2
 SQL
 )" = '1'
 
-printf 'Exact v0.2.0 MariaDB migration and map/reconnect accumulation checks passed.\n'
+# Real SQL replay: a newer absolute callback followed by an older callback must
+# retain the larger acknowledged total without double-counting.
+mysql_exec <<'SQL'
+INSERT INTO kgb_cw_players
+    (match_uid,map_number,auth_id,player_name,last_team,kills,deaths,headshots,updated_at)
+VALUES ('series-overlap',1,'STEAM_0:1:333','Player Three','CT',12,7,4,CURRENT_TIMESTAMP)
+ON DUPLICATE KEY UPDATE
+    kills=GREATEST(kills,VALUES(kills)), deaths=GREATEST(deaths,VALUES(deaths)),
+    headshots=GREATEST(headshots,VALUES(headshots)), updated_at=CURRENT_TIMESTAMP;
+INSERT INTO kgb_cw_players
+    (match_uid,map_number,auth_id,player_name,last_team,kills,deaths,headshots,updated_at)
+VALUES ('series-overlap',1,'STEAM_0:1:333','Player Three','T',10,5,2,CURRENT_TIMESTAMP)
+ON DUPLICATE KEY UPDATE
+    kills=GREATEST(kills,VALUES(kills)), deaths=GREATEST(deaths,VALUES(deaths)),
+    headshots=GREATEST(headshots,VALUES(headshots)), updated_at=CURRENT_TIMESTAMP;
+SQL
+test "$(mysql_exec <<'SQL'
+SELECT CONCAT(kills,':',deaths,':',headshots) FROM kgb_cw_players
+WHERE match_uid='series-overlap' AND map_number=1 AND auth_id='STEAM_0:1:333';
+SQL
+)" = '12:7:4'
+
+# A malformed predecessor must be rejected without opportunistic DDL.
+mysql_exec <<'SQL'
+DROP TABLE kgb_cw_players;
+CREATE TABLE kgb_cw_players (
+    match_uid VARCHAR(64) NOT NULL,
+    auth_id VARCHAR(40) NOT NULL,
+    player_name VARCHAR(32) NOT NULL,
+    last_team VARCHAR(16) NOT NULL,
+    kills INTEGER NOT NULL DEFAULT 0,
+    deaths INTEGER NOT NULL DEFAULT 0,
+    headshots INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (match_uid, auth_id)
+);
+SQL
+if mysql_exec < "$ROOT_DIR/sql/migrate-v0.2.0-to-v0.3.0.sql" >/dev/null 2>&1; then
+	printf 'Malformed predecessor was unexpectedly accepted.\n' >&2
+	exit 1
+fi
+test "$(mysql_exec <<'SQL'
+SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='kgb_cw_players' AND COLUMN_NAME='map_number';
+SQL
+)" = '0'
+
+printf 'Idempotent exact-schema migration, fail-closed rejection, and map/reconnect accumulation checks passed.\n'

@@ -81,4 +81,6 @@ kgb_cw_scoreid_screenshots 0
 ; Apply the configured score and identity screenshot workflows to an
 ; administrator-requested match stop as well as normal half/match endings.
 kgb_cw_screenshot_on_stop 0
-kgb_cw_file_stats 1
+; Opt in to local files containing player names, SteamIDs, user IDs, teams,
+; and score statistics. Configure access, retention, and deletion first.
+kgb_cw_file_stats 0

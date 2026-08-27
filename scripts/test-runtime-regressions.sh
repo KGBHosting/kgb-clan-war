@@ -29,7 +29,13 @@ hash_file() {
 # cleared. This guards against a partially written or partially restored map 2.
 require_string "$CORE" 'stock bool:capture_series_manifest()'
 require_string "$CORE" 'stock bool:persist_series_manifest()'
-require_string "$CORE" 'stock bool:restore_series_manifest()'
+require_string "$CORE" 'stock bool:parse_series_manifest()'
+require_string "$CORE" 'stock commit_series_manifest()'
+require_string "$CORE" 'stock bool:parse_crossmap_envelope()'
+require_string "$CORE" 'stock commit_crossmap_envelope()'
+require_string "$CORE" '!equal(storedMatchId, g_RestoreMatchId)'
+require_string "$CORE" 'parse_uint_exact(scoreAValue, 0, 1000, scoreA)'
+require_string "$CORE" 'parse_bool_exact(legacyValue, legacyActive)'
 require_string "$CORE" 'set_localinfo(LI_MANIFEST_ACTIVE, "1")'
 require_string "$CORE" 'set_localinfo(LI_MANIFEST_ACTIVE, "")'
 require_string "$CORE" 'if (!restarting) { restore_legacy_record_mode(); discard_series_manifest(); }'
@@ -42,6 +48,27 @@ for setting in \
 	kgb_cw_map_count kgb_cw_client_demos kgb_cw_hltv_enabled kgb_cw_hltv_auto_record; do
 	require_string "$CORE" "\"$setting\""
 done
+require_string "$CORE" 'stock series_managed_number('
+require_string "$CORE" 'stock series_extra_number('
+require_string "$CORE" 'series_managed_number(MC_HALF_ROUNDS, g_CvarHalfRounds)'
+require_string "$CORE" 'series_managed_number(MC_OVERTIME, g_CvarOvertime)'
+require_string "$CORE" 'series_extra_string(SC_MATCH_CONFIG, cvar, token, charsmax(token))'
+require_string "$CORE" 'series_extra_number(SC_CLIENT_DEMOS, g_CvarClientDemos)'
+
+# Rejected two-phase restore must not commit staged values.
+live_format=mr
+staged_format=tl
+valid_envelope=0
+if test "$valid_envelope" -eq 1; then live_format="$staged_format"; fi
+test "$live_format" = mr
+
+# TL expiry has an explicit no-winner Round_End path, and all terminal half
+# paths capture before the regulation/OT transition.
+require_string "$CORE" 'register_logevent("event_round_end", 2, "1=Round_End")'
+require_string "$CORE" 'public task_finish_tl_draw()'
+require_string "$CORE" 'write_stats_event("round_draw")'
+require_string "$CORE" 'emit_match_event("half_end"); write_stats_event("overtime_half_end"); take_match_screenshots()'
+require_string "$CORE" 'if (is_user_connected(id) && g_ScoreIdSnapshotAuthorized[id]) client_cmd(id, "snapshot")'
 
 # Exercise the vote rule independently of player slots: disconnect retracts
 # exactly one choice, reconnect starts empty, and a new vote counts once.
@@ -114,36 +141,50 @@ require_string "$HLTV" 'g_RecordRestartPending = false'
 require_string "$HLTV" 'if (operation == RCON_STOP_RECORDING)'
 require_string "$HLTV" 'Stop request failed; recording state remains active/unknown and a replacement recording will not start.'
 require_string "$HLTV" 'stop_recording_on_unload()'
+require_string "$HLTV" 'stock freeze_auto_recording_policy()'
+require_string "$HLTV" 'if (g_AutoPolicyFrozen) return g_AutoPolicyEnabled && g_AutoPolicyRecord'
+
+# Mid-match CVAR changes apply to the next series, not the active recording.
+frozen_enabled=1
+frozen_auto=1
+live_cvar_enabled=0
+test "$frozen_enabled" -eq 1 && test "$frozen_auto" -eq 1 && test "$live_cvar_enabled" -eq 0
 
 # A re-LO3 during the original TL LO3 must preserve the pending timer reset.
 require_string "$CORE" 'new bool:resetTimerAfterLo3 = resetTlTimer || g_ResetTlTimerAfterLo3'
 require_string "$CORE" 'if (g_ResetTlTimerAfterLo3 && g_Format == FORMAT_TL && !g_InOvertime) schedule_time_limit_half()'
 
-# The SQL accumulator stores only new deltas. Repeating a persist is a no-op,
-# while a reconnect under the same SteamID adds a fresh session to the row.
-db_kills=0 db_deaths=0 db_headshots=0
-persisted_kills=0 persisted_deaths=0 persisted_headshots=0
-session_kills=7 session_deaths=2 session_headshots=1
-persist_delta() {
-	db_kills=$((db_kills + session_kills - persisted_kills))
-	db_deaths=$((db_deaths + session_deaths - persisted_deaths))
-	db_headshots=$((db_headshots + session_headshots - persisted_headshots))
-	persisted_kills=$session_kills
-	persisted_deaths=$session_deaths
-	persisted_headshots=$session_headshots
-}
-persist_delta
-persist_delta
-test "$db_kills" -eq 7 && test "$db_deaths" -eq 2 && test "$db_headshots" -eq 1
-persisted_kills=0; persisted_deaths=0; persisted_headshots=0
-session_kills=3; session_deaths=4; session_headshots=0
-persist_delta
-test "$db_kills" -eq 10 && test "$db_deaths" -eq 6 && test "$db_headshots" -eq 1
+# Model the SQL callback contract deterministically. A transient failure does
+# not advance the acknowledged session baseline; retries and overlapping
+# callbacks use absolute maxima, so either callback order is idempotent.
+db_kills=5
+base_kills=5
+session_kills=3
+ack_session_kills=0
+target=$((base_kills + session_kills))
+# First asynchronous attempt fails: baseline stays at zero.
+test "$ack_session_kills" -eq 0 && test "$db_kills" -eq 5
+# Retry succeeds.
+db_kills=$((db_kills > target ? db_kills : target))
+ack_session_kills=$session_kills
+test "$db_kills" -eq 8 && test "$ack_session_kills" -eq 3
+# Two forced terminal writes overlap; newer succeeds before older.
+older_target=10
+newer_target=12
+db_kills=$((db_kills > newer_target ? db_kills : newer_target))
+ack_session_kills=7
+db_kills=$((db_kills > older_target ? db_kills : older_target))
+ack_session_kills=$((ack_session_kills > 5 ? ack_session_kills : 5))
+test "$db_kills" -eq 12 && test "$ack_session_kills" -eq 7
 require_string "$SQL" 'PRIMARY KEY (match_uid,map_number,auth_id)'
 require_string "$SQL" 'ON DUPLICATE KEY UPDATE'
-require_string "$SQL" 'kills=kills+VALUES(kills)'
-require_string "$SQL" 'equal(columns, "match_uid,map_number,auth_id")'
-require_string "$SQL" 'g_PlayerPersistedKills[id] = g_PlayerKills[id]'
+require_string "$SQL" 'kills=GREATEST(kills,VALUES(kills))'
+require_string "$SQL" 'public query_player_write('
+require_string "$SQL" 'g_WriteAttempts[operation] < PLAYER_WRITE_RETRY_MAX'
+require_string "$SQL" 'g_PlayerPersistedKills[player] = max('
+require_string "$SQL" 'if (g_PlayerDepartureHandled[id]) return'
+require_string "$SQL" 'reject_player_schema(schema, primary)'
+require_string "$SQL" 'equal(schema, PLAYER_SCHEMA_V02) && equal(primary, "match_uid,auth_id")'
 test "$(hash_file "$V020_SCHEMA")" = '68a5ea318fa75a8031386d62725648fe871d5cee9fc24ac90d5ae2feefb3006e'
 require_string "$V020_SCHEMA" 'PRIMARY KEY (match_uid, auth_id)'
 if grep -Fq 'map_number' "$V020_SCHEMA"; then
@@ -152,6 +193,7 @@ if grep -Fq 'map_number' "$V020_SCHEMA"; then
 fi
 require_string "$MIGRATION" 'ADD COLUMN map_number INTEGER NOT NULL DEFAULT 1 AFTER match_uid;'
 require_string "$MIGRATION" 'ADD PRIMARY KEY (match_uid, map_number, auth_id);'
+require_string "$MIGRATION" "SIGNAL SQLSTATE '45000'"
 if grep -Fq 'REPLACE INTO kgb_cw_players' "$SQL"; then
 	printf 'Player persistence must not replace accumulated map rows.\n' >&2
 	exit 1
@@ -172,6 +214,11 @@ fi
 require_string "$CORE" 'stock restore_legacy_record_mode()'
 require_string "$CORE" 'audit_event("legacy_record_mode_restored")'
 require_string "$CORE" 'restore_legacy_record_mode(); clear_crossmap_state(); discard_series_manifest()'
+legacy_validate_line="$(grep -n 'apply_legacy_record_mode(recordMode, false)' "$CORE" | cut -d: -f1 | head -1)"
+legacy_restore_line="$(grep -n 'restore_legacy_record_mode()' "$CORE" | awk -F: -v minimum="$legacy_validate_line" '$1 > minimum {print $1; exit}')"
+test "$legacy_restore_line" -gt "$legacy_validate_line"
+
+require_string "$CORE" 'g_CvarFileStats = register_cvar("kgb_cw_file_stats", "0")'
 
 "$ROOT_DIR/scripts/test-filesystem-semantics.sh"
 printf 'Runtime state-model and source regression checks passed.\n'

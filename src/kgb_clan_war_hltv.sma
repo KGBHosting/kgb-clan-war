@@ -47,6 +47,9 @@ new bool:g_StopPathWarningShown
 new RconOperation:g_RconOperation = RCON_NONE
 new bool:g_RecordStartPending, bool:g_RecordStopPending
 new bool:g_RecordRestartPending
+new bool:g_AutoPolicyFrozen
+new bool:g_AutoPolicyEnabled
+new bool:g_AutoPolicyRecord
 
 public plugin_init()
 {
@@ -251,9 +254,12 @@ public kgb_cw_event(const event[], const team_a[], const team_b[], map_number, h
         g_RecordRestartPending = false
         remove_task(TASK_HLTV_START); remove_task(TASK_HLTV_STOP)
         set_task(clamp_delay(get_pcvar_float(g_CvarStopDelay)), "task_stop_recording", TASK_HLTV_STOP)
+        g_AutoPolicyFrozen = false
         return
     }
-    if (!get_pcvar_num(g_CvarEnabled) || !get_pcvar_num(g_CvarAutoRecord))
+    if (equali(event, "match_start") || (equali(event, "half_start") && map_number == 2 && half == 1))
+        freeze_auto_recording_policy()
+    if (!auto_recording_enabled())
     {
         return
     }
@@ -292,7 +298,7 @@ public task_monitor_configuration()
 
 stock schedule_recording_start()
 {
-    if (!get_pcvar_num(g_CvarEnabled) || !get_pcvar_num(g_CvarAutoRecord))
+    if (!auto_recording_enabled())
     {
         g_RecordRestartPending = false
         return
@@ -304,7 +310,7 @@ stock schedule_recording_start()
 stock drive_recording_restart()
 {
     if (!g_RecordRestartPending) return
-    if (!get_pcvar_num(g_CvarEnabled) || !get_pcvar_num(g_CvarAutoRecord))
+    if (!auto_recording_enabled())
     {
         g_RecordRestartPending = false
         return
@@ -326,14 +332,14 @@ stock drive_recording_restart()
 
 stock enforce_disabled_recording_stop()
 {
-    if (get_pcvar_num(g_CvarEnabled) && get_pcvar_num(g_CvarAutoRecord)) return
+    if (auto_recording_enabled()) return
     remove_task(TASK_HLTV_START)
     if (g_Recording || g_RecordStartPending) task_stop_recording()
 }
 
 public task_start_recording()
 {
-    if (!get_pcvar_num(g_CvarEnabled) || !get_pcvar_num(g_CvarAutoRecord) || g_Recording || g_RecordStartPending || g_RecordStopPending)
+    if (!auto_recording_enabled() || g_Recording || g_RecordStartPending || g_RecordStopPending)
     {
         return
     }
@@ -370,6 +376,19 @@ public task_start_recording()
         server_print("[KGB CW HLTV] No connected HLTV proxy was found; recording was not started.")
         g_RecordFile[0] = 0
     }
+}
+
+stock freeze_auto_recording_policy()
+{
+    g_AutoPolicyEnabled = bool:get_pcvar_num(g_CvarEnabled)
+    g_AutoPolicyRecord = bool:get_pcvar_num(g_CvarAutoRecord)
+    g_AutoPolicyFrozen = true
+}
+
+stock bool:auto_recording_enabled()
+{
+    if (g_AutoPolicyFrozen) return g_AutoPolicyEnabled && g_AutoPolicyRecord
+    return bool:(get_pcvar_num(g_CvarEnabled) && get_pcvar_num(g_CvarAutoRecord))
 }
 
 public task_stop_recording()

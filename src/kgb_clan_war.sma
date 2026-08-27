@@ -46,6 +46,7 @@
 #define TASK_SCOREID_SNAPSHOT 73113
 #define TASK_PLAYOUT_VOTE 73114
 #define TASK_PUG_MAP_CHANGE 73115
+#define TASK_TL_ROUND_END 73116
 #define TASK_KNIFE_EQUIP 73200
 
 #define LI_ACTIVE "_kgbcw_active"
@@ -88,6 +89,7 @@ new g_Half = 1, g_RoundsThisHalf, g_OvertimeCycle
 new bool:g_InOvertime, bool:g_RoundResolved, bool:g_Lo3Running
 new bool:g_Ready[MAX_PLAYERS + 1], bool:g_TeamReady[2]
 new bool:g_DemoStarted[MAX_PLAYERS + 1]
+new bool:g_ScoreIdSnapshotAuthorized[MAX_PLAYERS + 1]
 new bool:g_EnvironmentSaved, bool:g_MapChangePending, bool:g_KnifeDecisionMade
 new bool:g_ShieldRestricted
 new bool:g_OvertimeVoted[MAX_PLAYERS + 1], bool:g_PugActive
@@ -102,6 +104,12 @@ new bool:g_PlayoutDecisionMade, bool:g_TimeLimitExpired, bool:g_ResetTlTimerAfte
 new bool:g_SeriesManifestCaptured
 new g_SeriesManifestValues[SERIES_MANIFEST_MAX][SERIES_MANIFEST_VALUE_MAX + 1]
 new g_SeriesRestoreValues[SERIES_MANIFEST_MAX][SERIES_MANIFEST_VALUE_MAX + 1]
+new g_RestoreMatchId[MAX_MATCH_ID + 1]
+new g_RestoreOldHostname[128], g_RestoreOldPassword[64], g_RestoreOldShield[8]
+new g_RestoreScoreA, g_RestoreScoreB, CsTeams:g_RestoreTeamASide
+new bool:g_RestorePugActive, g_RestorePugStyle[16]
+new bool:g_RestoreLegacyRecord
+new g_RestoreLegacyClient, g_RestoreLegacyHltvEnabled, g_RestoreLegacyHltvAuto
 new bool:g_LegacyRecordOverride
 new g_LegacyOldClientDemos, g_LegacyOldHltvEnabled = -1, g_LegacyOldHltvAuto = -1
 new g_KnifeVoteChoice[MAX_PLAYERS + 1]
@@ -241,7 +249,7 @@ public plugin_init()
     g_CvarDisableShield = register_cvar("kgb_cw_disable_shield", "0")
     g_CvarClientDemos = register_cvar("kgb_cw_client_demos", "0")
     g_CvarScreenshots = register_cvar("kgb_cw_screenshots", "0")
-    g_CvarFileStats = register_cvar("kgb_cw_file_stats", "1")
+    g_CvarFileStats = register_cvar("kgb_cw_file_stats", "0")
 
     register_concmd("amx_cw_menu", "command_menu", ADMIN_CFG, "- open match controls")
     register_concmd("amx_cw_warmup", "command_warmup", ADMIN_CFG, "- start warmup")
@@ -292,6 +300,7 @@ public plugin_init()
     register_event("ResetHUD", "event_player_spawn", "be")
     register_event("SendAudio", "event_ct_win", "a", "2=%!MRAD_ctwin")
     register_event("SendAudio", "event_t_win", "a", "2=%!MRAD_terwin")
+    register_logevent("event_round_end", 2, "1=Round_End")
     register_event("CurWeapon", "event_current_weapon", "be", "1=1")
     register_event("TeamInfo", "event_team_info", "a")
     register_touch("weaponbox", "player", "touch_knife_weapon")
@@ -328,7 +337,7 @@ public client_putinserver(id)
 {
     clear_client_state(id)
     g_HalfKillsStart[id] = get_user_frags(id); g_HalfDeathsStart[id] = cs_get_user_deaths(id)
-    if (g_State == STATE_LIVE && get_pcvar_num(g_CvarClientDemos)) start_client_demo(id)
+    if (g_State == STATE_LIVE && series_extra_number(SC_CLIENT_DEMOS, g_CvarClientDemos)) start_client_demo(id)
 }
 public client_disconnect(id) { handle_client_departure(id); }
 public client_disconnected(id) { handle_client_departure(id); }
@@ -336,6 +345,7 @@ public client_disconnected(id) { handle_client_departure(id); }
 stock handle_client_departure(id)
 {
     remove_task(TASK_SCOREID_SNAPSHOT + id)
+    g_ScoreIdSnapshotAuthorized[id] = false
     if (g_State == STATE_KNIFE_VOTE && g_KnifeVoted[id])
     {
         if (g_KnifeVoteChoice[id] == 1 && g_KnifeStayVotes > 0) g_KnifeStayVotes--
@@ -361,6 +371,7 @@ stock clear_client_state(id)
 {
     g_Ready[id] = false
     g_DemoStarted[id] = false
+    g_ScoreIdSnapshotAuthorized[id] = false
     g_KnifeVoted[id] = false
     g_KnifeVoteChoice[id] = 0
     g_OvertimeVoted[id] = false
@@ -675,7 +686,7 @@ public command_scoreids(id, level, cid)
 public command_scoreids_snapshot(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 1)) return PLUGIN_HANDLED
-    if (!get_pcvar_num(g_CvarScoreIdScreenshots))
+    if (!series_managed_number(MC_SCOREID_SCREENSHOTS, g_CvarScoreIdScreenshots))
     {
         cw_console_ml(id, "CW_ERR_SCOREID_SCREENSHOT_DISABLED")
         return PLUGIN_HANDLED
@@ -683,6 +694,7 @@ public command_scoreids_snapshot(id, level, cid)
     command_scoreids(id, level, cid)
     show_identity_motd(id)
     remove_task(TASK_SCOREID_SNAPSHOT + id)
+    g_ScoreIdSnapshotAuthorized[id] = true
     set_task(0.8, "task_scoreid_snapshot", TASK_SCOREID_SNAPSHOT + id)
     return PLUGIN_HANDLED
 }
@@ -699,7 +711,6 @@ public command_legacy_match(id, level, cid)
         configure_legacy_match(id, teamA, teamB, rule, config, "", recordMode)
         return PLUGIN_HANDLED
     }
-    restore_legacy_record_mode()
     new teamA[MAX_TEAM_NAME + 1], teamB[MAX_TEAM_NAME + 1], preset[MAX_PRESET_TOKEN + 1]
     read_argv(1, teamA, charsmax(teamA)); read_argv(2, teamB, charsmax(teamB)); read_argv(3, preset, charsmax(preset))
     trim(teamA); trim(teamB); strtolower(preset)
@@ -708,6 +719,12 @@ public command_legacy_match(id, level, cid)
         cw_console_ml(id, "CW_USAGE_LEGACY_MATCH")
         return PLUGIN_HANDLED
     }
+    if (preset[0] && !preset_config_valid(preset))
+    {
+        cw_console_ml(id, "CW_ERR_PRESET_INVALID")
+        return PLUGIN_HANDLED
+    }
+    restore_legacy_record_mode()
     if (preset[0] && !apply_preset(id, preset)) return PLUGIN_HANDLED
     set_pcvar_string(g_CvarTeamAName, teamA); set_pcvar_string(g_CvarTeamBName, teamB)
     if (!start_warmup(true))
@@ -751,7 +768,6 @@ public command_legacy_match4(id, level, cid)
 
 stock bool:configure_legacy_match(id, const teamAInput[], const teamBInput[], const ruleInput[], const configInput[], const secondMapInput[], const recordModeInput[])
 {
-    restore_legacy_record_mode()
     new teamA[MAX_TEAM_NAME + 1], teamB[MAX_TEAM_NAME + 1], rule[16], config[MAX_CONFIG_TOKEN + 1]
     new secondMap[MAX_MAP_TOKEN + 1], recordMode[16], configPath[MAX_CONFIG_TOKEN + 5], currentMap[MAX_MAP_TOKEN + 1]
     copy(teamA, charsmax(teamA), teamAInput); copy(teamB, charsmax(teamB), teamBInput); trim(teamA); trim(teamB)
@@ -784,6 +800,10 @@ stock bool:configure_legacy_match(id, const teamAInput[], const teamBInput[], co
         cw_console_ml(id, "CW_ERR_LEGACY_RECORD")
         return false
     }
+
+    /* All replacement arguments and dependencies are valid before the old
+     * legacy recording policy is unwound. */
+    restore_legacy_record_mode()
 
     new oldFormat[4], oldTeamA[MAX_TEAM_NAME + 1], oldTeamB[MAX_TEAM_NAME + 1]
     new oldTagA[MAX_TEAM_TAG + 1], oldTagB[MAX_TEAM_TAG + 1], oldConfig[MAX_CONFIG_TOKEN + 1]
@@ -1177,6 +1197,24 @@ public menu_knife_vote_handler(id, menu, item)
 public event_new_round() { g_RoundResolved = false; }
 public event_ct_win() { handle_round_winner(CS_TEAM_CT); }
 public event_t_win() { handle_round_winner(CS_TEAM_T); }
+public event_round_end()
+{
+    /* SendAudio normally resolves a winning round before Round_End. Defer the
+     * no-winner path so TL still advances when the clock expires on a draw. */
+    if (g_State == STATE_LIVE && g_Format == FORMAT_TL && g_TimeLimitExpired && !g_RoundResolved)
+    {
+        remove_task(TASK_TL_ROUND_END)
+        set_task(0.1, "task_finish_tl_draw", TASK_TL_ROUND_END)
+    }
+}
+
+public task_finish_tl_draw()
+{
+    if (g_State != STATE_LIVE || g_Format != FORMAT_TL || !g_TimeLimitExpired || g_RoundResolved) return
+    g_RoundResolved = true
+    write_stats_event("round_draw")
+    complete_time_limit_half()
+}
 
 public event_player_spawn(id)
 {
@@ -1254,9 +1292,9 @@ public task_begin_next_half()
     g_RoundsThisHalf = 0
     g_HalfStartA = g_TeamAScore; g_HalfStartB = g_TeamBScore
     execute_phase_config(g_InOvertime ? g_CvarOvertimeConfig : g_CvarMatchConfig, g_InOvertime ? "overtime" : "match")
-    if (g_InOvertime) set_cvar_num("mp_startmoney", clamp(get_pcvar_num(g_CvarOvertimeMoney), 800, 16000))
+    if (g_InOvertime) set_cvar_num("mp_startmoney", clamp(series_managed_number(MC_OT_MONEY, g_CvarOvertimeMoney), 800, 16000))
     set_scoreboard_team_score("CT", 0); set_scoreboard_team_score("TERRORIST", 0)
-    if (g_Half == 2 && get_pcvar_num(g_CvarSecondHalfReady))
+    if (g_Half == 2 && series_managed_number(MC_SECOND_READY, g_CvarSecondHalfReady))
     {
         reset_ready_players(); set_cw_state(STATE_HALF_READY)
         announce_ml("CW_SECOND_READY_GATE")
@@ -1288,7 +1326,7 @@ public task_finish_playout_vote() { finish_playout_vote(); }
 public task_status_hud()
 {
     refresh_branding(false)
-    if (get_pcvar_num(g_CvarHudAnnouncements))
+    if (series_extra_number(SC_HUD_ANNOUNCEMENTS, g_CvarHudAnnouncements))
     {
         new labelA[MAX_TEAM_LABEL + 1], labelB[MAX_TEAM_LABEL + 1]
         get_team_label(0, labelA, charsmax(labelA)); get_team_label(1, labelB, charsmax(labelB))
@@ -1308,13 +1346,14 @@ public task_status_hud()
 public task_scoreid_snapshot(taskId)
 {
     new id = taskId - TASK_SCOREID_SNAPSHOT
-    if (is_user_connected(id) && get_pcvar_num(g_CvarScoreIdScreenshots)) client_cmd(id, "snapshot")
+    if (is_user_connected(id) && g_ScoreIdSnapshotAuthorized[id]) client_cmd(id, "snapshot")
+    g_ScoreIdSnapshotAuthorized[id] = false
 }
 
 public task_time_limit_half()
 {
     if (g_State != STATE_LIVE || g_Format != FORMAT_TL) return
-    if (get_pcvar_num(g_CvarTimeLimitFinishRound))
+    if (series_managed_number(MC_TL_FINISH_ROUND, g_CvarTimeLimitFinishRound))
     {
         g_TimeLimitExpired = true
         announce_ml("CW_TL_FINISH_ROUND")
@@ -1353,44 +1392,19 @@ public task_resume_crossmap()
         return
     }
 
-    new expected[MAX_MAP_TOKEN + 1], current[MAX_MAP_TOKEN + 1], value[32], storedMatchId[MAX_MATCH_ID + 1]
-    get_localinfo(LI_MAP, expected, charsmax(expected)); get_mapname(current, charsmax(current))
-    get_localinfo(LI_MATCH_ID, storedMatchId, charsmax(storedMatchId))
-    if (!valid_map_token(expected) || !equali(expected, current) ||
-        !restore_crossmap_record_state() || !restore_series_manifest() ||
-        !equal(storedMatchId, g_MatchId) || !load_runtime_settings(true))
+    if (!parse_crossmap_envelope())
     {
         log_amx("Rejected stale or invalid cross-map match state")
-        restore_crossmap_environment(); restore_legacy_record_mode(); clear_crossmap_state(); discard_series_manifest(); return
+        clear_crossmap_state()
+        return
     }
-    get_localinfo(LI_SCORE_A, value, charsmax(value)); g_PreviousMapScoreA = clamp(str_to_num(value), 0, 1000)
-    get_localinfo(LI_SCORE_B, value, charsmax(value)); g_PreviousMapScoreB = clamp(str_to_num(value), 0, 1000)
-    load_env_snapshot()
-    get_localinfo(LI_TEAM_A_SIDE, value, charsmax(value))
-    new restoredSide = str_to_num(value)
-    if (restoredSide != _:CS_TEAM_CT && restoredSide != _:CS_TEAM_T)
-    {
-        log_amx("Rejected invalid cross-map team side")
-        restore_environment(); restore_legacy_record_mode(); clear_crossmap_state(); discard_series_manifest(); return
-    }
-    g_TeamASide = CsTeams:restoredSide
-    get_localinfo(LI_PUG_ACTIVE, value, charsmax(value)); g_PugActive = bool:equal(value, "1")
-    if (g_PugActive)
-    {
-        get_localinfo(LI_PUG_STYLE, value, charsmax(value)); strtolower(value)
-        if (equal(value, "random") || equal(value, "manual")) set_pcvar_string(g_CvarPugStyle, value)
-        else g_PugActive = false
-    }
+    commit_crossmap_envelope()
     clear_crossmap_state()
-
-    g_MapNumber = 2; g_MapCount = 2; g_TeamAScore = 0; g_TeamBScore = 0
-    g_Half = 1; g_RoundsThisHalf = 0; g_HalfStartA = 0; g_HalfStartB = 0
-    g_InOvertime = false; g_OvertimeCycle = 0
     apply_environment(false); execute_phase_config(g_CvarMatchConfig, "match")
     set_cw_state(STATE_LIVE); emit_match_event("half_start"); write_stats_event("map_resume")
     g_CaptureHalfBaselineAfterLo3 = true
     start_client_demos(); begin_lo3(true, true)
-    announce_ml("CW_MAP_RESUMED", g_MatchId, current)
+    announce_ml("CW_MAP_RESUMED", g_MatchId, g_Map2)
 }
 
 stock bool:mode_enabled(id)
@@ -1601,6 +1615,15 @@ stock bool:preset_exists(const preset[])
     return bool:file_exists(path)
 }
 
+stock bool:preset_config_valid(const preset[])
+{
+    if (!valid_simple_token(preset, MAX_PRESET_TOKEN) || !preset_exists(preset)) return false
+    new configsDir[128], path[224]
+    get_configsdir(configsDir, charsmax(configsDir))
+    formatex(path, charsmax(path), "%s/kgb_clan_war/presets/%s.cfg", configsDir, preset)
+    return managed_config_file_valid(path, true)
+}
+
 stock bool:apply_preset(id, const preset[])
 {
     if (!safe_configuration_state(id)) return false
@@ -1612,7 +1635,7 @@ stock bool:apply_preset(id, const preset[])
     new configsDir[128], path[224]
     get_configsdir(configsDir, charsmax(configsDir))
     formatex(path, charsmax(path), "%s/kgb_clan_war/presets/%s.cfg", configsDir, preset)
-    if (!managed_config_file_valid(path, true) || !apply_managed_config_file(path, true))
+    if (!preset_config_valid(preset) || !apply_managed_config_file(path, true))
     {
         cw_console_ml(id, "CW_ERR_PRESET_INVALID")
         return false
@@ -1648,6 +1671,52 @@ stock bool:preset_config_index_allowed(index)
     return false
 }
 
+stock bool:parse_uint_exact(const value[], minimum, maximum, &output)
+{
+    if (!value[0]) return false
+    new number
+    for (new index = 0; value[index]; index++)
+    {
+        if (value[index] < '0' || value[index] > '9') return false
+        number = number * 10 + value[index] - '0'
+        if (number > maximum) return false
+    }
+    new canonical[16]
+    num_to_str(number, canonical, charsmax(canonical))
+    if (!equal(value, canonical) || number < minimum) return false
+    output = number
+    return true
+}
+
+stock bool:parse_bool_exact(const value[], &output)
+{
+    return parse_uint_exact(value, 0, 1, output)
+}
+
+stock bool:parse_legacy_tristate(const value[], &output)
+{
+    if (equal(value, "-1")) { output = -1; return true; }
+    return parse_bool_exact(value, output)
+}
+
+stock bool:valid_match_id_exact(const value[])
+{
+    if (strlen(value) != 15 || value[8] != '_') return false
+    for (new index = 0; index < 15; index++)
+    {
+        if (index == 8) continue
+        if (value[index] < '0' || value[index] > '9') return false
+    }
+    return true
+}
+
+stock bool:valid_snapshot_value(const value[], maximum)
+{
+    if (strlen(value) > maximum) return false
+    for (new index = 0; value[index]; index++) if (value[index] < 32 || value[index] > 126) return false
+    return true
+}
+
 stock bool:managed_config_value_valid(index, const value[])
 {
     switch (index)
@@ -1662,23 +1731,26 @@ stock bool:managed_config_value_valid(index, const value[])
         case MC_PUG_STYLE: return equali(value, "random") || equali(value, "manual")
         case MC_MAP1, MC_MAP2: return !value[0] || valid_map_token(value)
     }
-    if (!is_decimal_number(value)) return false
-    new number = str_to_num(value)
+    new number
     switch (index)
     {
-        case MC_PLAYOUT: return number >= 0 && number <= 2
-        case MC_MAP_COUNT: return number >= 1 && number <= 2
-        case MC_HALF_ROUNDS, MC_WIN_ROUNDS: return number >= 1 && number <= 100
-        case MC_TIME_LIMIT: return number >= 1 && number <= 180
-        case MC_OT_MAX: return number >= 0 && number <= 100
-        case MC_OT_HALF_ROUNDS: return number >= 1 && number <= 20
-        case MC_OT_MONEY: return number >= 800 && number <= 16000
-        case MC_OT_VOTE_SECONDS: return number >= 5 && number <= 30
-        case MC_MIN_READY: return number >= 1 && number <= 32
-        case MC_HUD_INTERVAL: return number == 0 || (number >= 3 && number <= 60)
+        case MC_PLAYOUT: return parse_uint_exact(value, 0, 2, number)
+        case MC_MAP_COUNT: return parse_uint_exact(value, 1, 2, number)
+        case MC_HALF_ROUNDS, MC_WIN_ROUNDS: return parse_uint_exact(value, 1, 100, number)
+        case MC_TIME_LIMIT: return parse_uint_exact(value, 1, 180, number)
+        case MC_OT_MAX: return parse_uint_exact(value, 0, 100, number)
+        case MC_OT_HALF_ROUNDS: return parse_uint_exact(value, 1, 20, number)
+        case MC_OT_MONEY: return parse_uint_exact(value, 800, 16000, number)
+        case MC_OT_VOTE_SECONDS: return parse_uint_exact(value, 5, 30, number)
+        case MC_MIN_READY: return parse_uint_exact(value, 1, 32, number)
+        case MC_HUD_INTERVAL:
+        {
+            if (!parse_uint_exact(value, 0, 60, number)) return false
+            return number == 0 || number >= 3
+        }
         case MC_PLAYOUT_DEFAULT, MC_TL_FINISH_ROUND, MC_OVERTIME, MC_OT_VOTE, MC_OT_VOTE_DEFAULT,
             MC_SECOND_READY, MC_PUG_MODE, MC_PUG_PERSIST, MC_SCREENSHOTS,
-            MC_SCOREID_SCREENSHOTS, MC_SCREENSHOT_ON_STOP: return number == 0 || number == 1
+            MC_SCOREID_SCREENSHOTS, MC_SCREENSHOT_ON_STOP: return parse_bool_exact(value, number)
     }
     return false
 }
@@ -1717,15 +1789,14 @@ stock bool:series_extra_value_valid(index, const value[])
         case SC_HOSTNAME: return !value[0] || valid_runtime_cvar_value(value, 127)
         case SC_PASSWORD: return !value[0] || valid_runtime_cvar_value(value, 63)
     }
-    if (!is_decimal_number(value)) return false
-    new number = str_to_num(value)
+    new number
     switch (extraIndex)
     {
-        case SC_HALFTIME_DELAY: return number >= 1 && number <= 30
-        case SC_KNIFE_VOTE_SECONDS: return number >= 5 && number <= 30
+        case SC_HALFTIME_DELAY: return parse_uint_exact(value, 1, 30, number)
+        case SC_KNIFE_VOTE_SECONDS: return parse_uint_exact(value, 5, 30, number)
         case SC_AUTO_LIVE, SC_HUD_ANNOUNCEMENTS, SC_KNIFE_VOTE, SC_SET_HOSTNAME,
             SC_SET_PASSWORD, SC_DISABLE_SHIELD, SC_CLIENT_DEMOS, SC_FILE_STATS,
-            SC_HLTV_ENABLED, SC_HLTV_AUTO_RECORD: return number == 0 || number == 1
+            SC_HLTV_ENABLED, SC_HLTV_AUTO_RECORD: return parse_bool_exact(value, number)
     }
     return false
 }
@@ -1764,7 +1835,7 @@ stock bool:capture_series_manifest()
 
 stock bool:persist_series_manifest()
 {
-    if (!g_SeriesManifestCaptured || !valid_simple_token(g_MatchId, MAX_MATCH_ID)) return false
+    if (!g_SeriesManifestCaptured || !valid_match_id_exact(g_MatchId)) return false
     new count = series_manifest_count(), key[32], value[16]
     set_localinfo(LI_MANIFEST_ACTIVE, "")
     for (new index = 0; index < count; index++)
@@ -1780,16 +1851,26 @@ stock bool:persist_series_manifest()
     return true
 }
 
-stock bool:restore_series_manifest()
+stock bool:restore_relationships_valid()
 {
-    new active[4], version[8], countValue[8], manifestId[MAX_MATCH_ID + 1]
+    new mapCount, pugMode
+    if (!parse_uint_exact(g_SeriesRestoreValues[_:MC_MAP_COUNT], 2, 2, mapCount)) return false
+    if (!valid_map_token(g_SeriesRestoreValues[_:MC_MAP1]) || !valid_map_token(g_SeriesRestoreValues[_:MC_MAP2]) ||
+        equali(g_SeriesRestoreValues[_:MC_MAP1], g_SeriesRestoreValues[_:MC_MAP2])) return false
+    if (!parse_bool_exact(g_SeriesRestoreValues[_:MC_PUG_MODE], pugMode)) return false
+    return true
+}
+
+stock bool:parse_series_manifest()
+{
+    new active[4], version[8], countValue[8], manifestId[MAX_MATCH_ID + 1], parsedCount
     get_localinfo(LI_MANIFEST_ACTIVE, active, charsmax(active))
     get_localinfo(LI_MANIFEST_VERSION, version, charsmax(version))
     get_localinfo(LI_MANIFEST_COUNT, countValue, charsmax(countValue))
     get_localinfo(LI_MANIFEST_ID, manifestId, charsmax(manifestId))
     new count = series_manifest_count()
-    if (!equal(active, "1") || !equal(version, SERIES_MANIFEST_VERSION) || str_to_num(countValue) != count ||
-        !valid_simple_token(manifestId, MAX_MATCH_ID)) return false
+    if (!equal(active, "1") || !equal(version, SERIES_MANIFEST_VERSION) ||
+        !parse_uint_exact(countValue, count, count, parsedCount) || !valid_match_id_exact(manifestId)) return false
 
     new key[32], cvarName[64]
     for (new index = 0; index < count; index++)
@@ -1800,18 +1881,63 @@ stock bool:restore_series_manifest()
         series_manifest_cvar_name(index, cvarName, charsmax(cvarName))
         if (!equal(g_SeriesRestoreValues[index], "-") && !cvar_exists(cvarName)) return false
     }
+    if (!restore_relationships_valid()) return false
+    copy(g_RestoreMatchId, charsmax(g_RestoreMatchId), manifestId)
+    return true
+}
+
+stock commit_series_manifest()
+{
+    new count = series_manifest_count(), cvarName[64]
     for (new index = 0; index < count; index++)
     {
         copy(g_SeriesManifestValues[index], charsmax(g_SeriesManifestValues[]), g_SeriesRestoreValues[index])
         if (equal(g_SeriesRestoreValues[index], "-")) continue
         series_manifest_cvar_name(index, cvarName, charsmax(cvarName))
-        if (!cvar_exists(cvarName)) return false
         set_cvar_string(cvarName, g_SeriesRestoreValues[index])
     }
-    copy(g_MatchId, charsmax(g_MatchId), manifestId)
+    copy(g_MatchId, charsmax(g_MatchId), g_RestoreMatchId)
+    if (equal(g_SeriesRestoreValues[_:MC_FORMAT], "tl")) g_Format = FORMAT_TL
+    else if (equal(g_SeriesRestoreValues[_:MC_FORMAT], "wl")) g_Format = FORMAT_WL
+    else g_Format = FORMAT_MR
+    if (equal(g_SeriesRestoreValues[_:MC_READY_MODE], "team")) g_ReadyMode = READY_TEAM
+    else if (equal(g_SeriesRestoreValues[_:MC_READY_MODE], "admin")) g_ReadyMode = READY_ADMIN
+    else g_ReadyMode = READY_PLAYER
+    copy(g_TeamAName, charsmax(g_TeamAName), g_SeriesRestoreValues[_:MC_TEAM_A_NAME])
+    copy(g_TeamBName, charsmax(g_TeamBName), g_SeriesRestoreValues[_:MC_TEAM_B_NAME])
+    copy(g_TeamATag, charsmax(g_TeamATag), g_SeriesRestoreValues[_:MC_TEAM_A_TAG])
+    copy(g_TeamBTag, charsmax(g_TeamBTag), g_SeriesRestoreValues[_:MC_TEAM_B_TAG])
+    copy(g_Map1, charsmax(g_Map1), g_SeriesRestoreValues[_:MC_MAP1])
+    copy(g_Map2, charsmax(g_Map2), g_SeriesRestoreValues[_:MC_MAP2])
+    g_MapCount = 2
     refresh_branding(false)
     g_SeriesManifestCaptured = true
-    return true
+}
+
+stock series_managed_number(ManagedConfigIndex:index, cvar)
+{
+    new valueIndex = _:index
+    return g_SeriesManifestCaptured ? str_to_num(g_SeriesManifestValues[valueIndex]) : get_pcvar_num(cvar)
+}
+
+stock series_extra_number(SeriesExtraConfigIndex:index, cvar)
+{
+    new valueIndex = sizeof g_ManagedConfigNames + _:index
+    return g_SeriesManifestCaptured ? str_to_num(g_SeriesManifestValues[valueIndex]) : get_pcvar_num(cvar)
+}
+
+stock series_managed_string(ManagedConfigIndex:index, cvar, output[], length)
+{
+    new valueIndex = _:index
+    if (g_SeriesManifestCaptured) copy(output, length, g_SeriesManifestValues[valueIndex])
+    else get_pcvar_string(cvar, output, length)
+}
+
+stock series_extra_string(SeriesExtraConfigIndex:index, cvar, output[], length)
+{
+    new valueIndex = sizeof g_ManagedConfigNames + _:index
+    if (g_SeriesManifestCaptured) copy(output, length, g_SeriesManifestValues[valueIndex])
+    else get_pcvar_string(cvar, output, length)
 }
 
 stock clear_series_manifest_storage()
@@ -2103,7 +2229,7 @@ stock stop_match(bool:administrator)
         audit_event(administrator ? "admin_mode_stop" : "mode_stop")
         write_stats_event(administrator ? "admin_mode_stop" : "mode_stop")
     }
-    if (administrator && hadActiveMatch && get_pcvar_num(g_CvarScreenshotOnStop)) take_match_screenshots()
+    if (administrator && hadActiveMatch && series_managed_number(MC_SCREENSHOT_ON_STOP, g_CvarScreenshotOnStop)) take_match_screenshots()
     stop_client_demos(); restore_environment(); execute_phase_config(g_CvarDefaultConfig, "default")
     restore_legacy_record_mode()
     reset_match_data(true); reset_ready_players(); clear_crossmap_state(); discard_series_manifest(); clear_pug_resume_state(); set_cw_state(STATE_OFF)
@@ -2163,7 +2289,7 @@ stock set_team_ready(id, bool:isReady)
 
 stock check_auto_live()
 {
-    if (!get_pcvar_num(g_CvarAutoLive) && g_State != STATE_HALF_READY) return
+    if (!series_extra_number(SC_AUTO_LIVE, g_CvarAutoLive) && g_State != STATE_HALF_READY) return
     if ((g_ReadyMode == READY_PLAYER && ready_count() >= required_ready_count()) ||
         (g_ReadyMode == READY_TEAM && g_TeamReady[0] && g_TeamReady[1]))
     {
@@ -2192,7 +2318,7 @@ stock ready_count()
     return ready
 }
 
-stock required_ready_count() { return clamp(get_pcvar_num(g_CvarMinReady), 1, 32); }
+stock required_ready_count() { return clamp(series_managed_number(MC_MIN_READY, g_CvarMinReady), 1, 32); }
 
 stock handle_round_winner(CsTeams:winner)
 {
@@ -2215,14 +2341,14 @@ stock evaluate_match_progress()
     if (g_Format == FORMAT_TL) return
     if (g_Format == FORMAT_WL)
     {
-        new target = clamp(get_pcvar_num(g_CvarWinRounds), 1, 100)
+        new target = clamp(series_managed_number(MC_WIN_ROUNDS, g_CvarWinRounds), 1, 100)
         if (g_TeamAScore >= target || g_TeamBScore >= target) complete_regulation_map()
         return
     }
 
-    new halfRounds = clamp(get_pcvar_num(g_CvarHalfRounds), 1, 100)
+    new halfRounds = clamp(series_managed_number(MC_HALF_ROUNDS, g_CvarHalfRounds), 1, 100)
     new roundsPlayed = g_TeamAScore + g_TeamBScore
-    new playoutMode = clamp(get_pcvar_num(g_CvarPlayout), 0, 2)
+    new playoutMode = clamp(series_managed_number(MC_PLAYOUT, g_CvarPlayout), 0, 2)
     if (playoutMode != 1 && !g_PlayoutDecisionMade && match_is_clinched(halfRounds, roundsPlayed))
     {
         if (playoutMode == 2) begin_playout_vote()
@@ -2254,14 +2380,15 @@ stock complete_regulation_map(bool:halfAlreadyEnded = false)
         emit_match_event("half_end")
         write_stats_event("half_end")
     }
+    take_match_screenshots()
     if (g_MapCount == 2 && g_MapNumber == 1) { begin_map_transition(); return; }
-    if (total_score_a() == total_score_b() && get_pcvar_num(g_CvarOvertime))
+    if (total_score_a() == total_score_b() && series_managed_number(MC_OVERTIME, g_CvarOvertime))
     {
-        if (get_pcvar_num(g_CvarOvertimeVote)) begin_overtime_vote()
+        if (series_managed_number(MC_OT_VOTE, g_CvarOvertimeVote)) begin_overtime_vote()
         else start_overtime_cycle()
         return
     }
-    finish_match(false)
+    finish_match(false, true)
 }
 
 stock begin_halftime()
@@ -2271,20 +2398,20 @@ stock begin_halftime()
     get_team_label(0, labelA, charsmax(labelA)); get_team_label(1, labelB, charsmax(labelB))
     announce_ml(automatic_swaps_enabled() ? "CW_HALFTIME_SWAP" : "CW_HALFTIME_NO_SWAP", labelA, g_TeamAScore, g_TeamBScore, labelB)
     remove_task(TASK_HALFTIME)
-    set_task(float(clamp(get_pcvar_num(g_CvarHalftimeDelay), 1, 30)), "task_begin_next_half", TASK_HALFTIME)
+    set_task(float(clamp(series_extra_number(SC_HALFTIME_DELAY, g_CvarHalftimeDelay), 1, 30)), "task_begin_next_half", TASK_HALFTIME)
 }
 
 stock start_overtime_cycle()
 {
-    new maxCycles = get_pcvar_num(g_CvarOvertimeMaxCycles)
+    new maxCycles = series_managed_number(MC_OT_MAX, g_CvarOvertimeMaxCycles)
     if (maxCycles > 0 && g_OvertimeCycle >= maxCycles) { finish_match(false); return; }
     g_InOvertime = true; g_OvertimeCycle++; g_Half = 1; g_RoundsThisHalf = 0
     g_HalfStartA = g_TeamAScore; g_HalfStartB = g_TeamBScore
     set_cw_state(STATE_HALFTIME); execute_phase_config(g_CvarOvertimeConfig, "overtime")
-    set_cvar_num("mp_startmoney", clamp(get_pcvar_num(g_CvarOvertimeMoney), 800, 16000))
+    set_cvar_num("mp_startmoney", clamp(series_managed_number(MC_OT_MONEY, g_CvarOvertimeMoney), 800, 16000))
     emit_match_event("overtime_start"); write_stats_event("overtime_start")
-    announce_ml("CW_OVERTIME_START", g_OvertimeCycle, clamp(get_pcvar_num(g_CvarOvertimeHalfRounds), 1, 20), clamp(get_pcvar_num(g_CvarOvertimeMoney), 800, 16000))
-    set_task(float(clamp(get_pcvar_num(g_CvarHalftimeDelay), 1, 30)), "task_begin_next_half", TASK_HALFTIME)
+    announce_ml("CW_OVERTIME_START", g_OvertimeCycle, clamp(series_managed_number(MC_OT_HALF_ROUNDS, g_CvarOvertimeHalfRounds), 1, 20), clamp(series_managed_number(MC_OT_MONEY, g_CvarOvertimeMoney), 800, 16000))
+    set_task(float(clamp(series_extra_number(SC_HALFTIME_DELAY, g_CvarHalftimeDelay), 1, 30)), "task_begin_next_half", TASK_HALFTIME)
 }
 
 stock begin_overtime_vote()
@@ -2305,7 +2432,7 @@ stock begin_overtime_vote()
         return
     }
     remove_task(TASK_OVERTIME_VOTE)
-    set_task(float(clamp(get_pcvar_num(g_CvarOvertimeVoteSeconds), 5, 30)), "task_finish_overtime_vote", TASK_OVERTIME_VOTE)
+    set_task(float(clamp(series_managed_number(MC_OT_VOTE_SECONDS, g_CvarOvertimeVoteSeconds), 5, 30)), "task_finish_overtime_vote", TASK_OVERTIME_VOTE)
 }
 
 stock show_overtime_vote_menu(id)
@@ -2323,7 +2450,7 @@ stock finish_overtime_vote()
     if (g_State != STATE_OVERTIME_VOTE) return
     remove_task(TASK_OVERTIME_VOTE)
     new bool:playOvertime
-    if (g_OvertimeYesVotes == g_OvertimeNoVotes) playOvertime = bool:get_pcvar_num(g_CvarOvertimeVoteDefault)
+    if (g_OvertimeYesVotes == g_OvertimeNoVotes) playOvertime = bool:series_managed_number(MC_OT_VOTE_DEFAULT, g_CvarOvertimeVoteDefault)
     else playOvertime = g_OvertimeYesVotes > g_OvertimeNoVotes
     announce_ml(playOvertime ? "CW_OVERTIME_VOTE_PLAY" : "CW_OVERTIME_VOTE_DRAW", g_OvertimeYesVotes, g_OvertimeNoVotes)
     audit_event(playOvertime ? "overtime_vote_play" : "overtime_vote_draw")
@@ -2389,7 +2516,7 @@ stock finish_playout_vote()
     if (g_State != STATE_PLAYOUT_VOTE) return
     remove_task(TASK_PLAYOUT_VOTE)
     new bool:playOut
-    if (g_PlayoutYesVotes == g_PlayoutNoVotes) playOut = bool:get_pcvar_num(g_CvarPlayoutVoteDefault)
+    if (g_PlayoutYesVotes == g_PlayoutNoVotes) playOut = bool:series_managed_number(MC_PLAYOUT_DEFAULT, g_CvarPlayoutVoteDefault)
     else playOut = g_PlayoutYesVotes > g_PlayoutNoVotes
     announce_ml(playOut ? "CW_PLAYOUT_VOTE_PLAY" : "CW_PLAYOUT_VOTE_END", g_PlayoutYesVotes, g_PlayoutNoVotes)
     audit_event(playOut ? "playout_vote_play" : "playout_vote_end")
@@ -2430,16 +2557,16 @@ stock playout_eligible_count(excludeId = 0)
 
 stock evaluate_overtime_progress()
 {
-    new otHalf = clamp(get_pcvar_num(g_CvarOvertimeHalfRounds), 1, 20)
+    new otHalf = clamp(series_managed_number(MC_OT_HALF_ROUNDS, g_CvarOvertimeHalfRounds), 1, 20)
     if (g_RoundsThisHalf < otHalf) return
     if (g_Half == 1)
     {
         emit_match_event("half_end"); write_stats_event("overtime_half_end"); take_match_screenshots()
         g_Half = 2; begin_halftime(); return
     }
-    emit_match_event("half_end"); write_stats_event("overtime_half_end")
-    if (total_score_a() == total_score_b()) { take_match_screenshots(); start_overtime_cycle(); }
-    else finish_match(false)
+    emit_match_event("half_end"); write_stats_event("overtime_half_end"); take_match_screenshots()
+    if (total_score_a() == total_score_b()) start_overtime_cycle()
+    else finish_match(false, true)
 }
 
 stock begin_map_transition()
@@ -2453,19 +2580,22 @@ stock begin_map_transition()
         return
     }
     emit_match_event("map_change"); write_stats_event("map_change")
-    take_match_screenshots(); stop_client_demos()
+    stop_client_demos()
     g_MapChangePending = true; set_cw_state(STATE_HALFTIME)
     announce_ml("CW_MAP1_COMPLETE", g_PreviousMapScoreA, g_PreviousMapScoreB, g_Map2)
     set_task(5.0, "task_change_map", TASK_MAP_CHANGE)
 }
 
-stock finish_match(bool:stopped)
+stock finish_match(bool:stopped, bool:screenshotTaken = false)
 {
     cancel_transition_tasks(); set_cw_state(STATE_FINISHED)
-    new bool:resumePug = g_PugActive && get_pcvar_num(g_CvarPugPersist)
+    new bool:resumePug = g_PugActive && series_managed_number(MC_PUG_PERSIST, g_CvarPugPersist)
+    new resumePugStyle[16]
+    if (resumePug) series_managed_string(MC_PUG_STYLE, g_CvarPugStyle, resumePugStyle, charsmax(resumePugStyle))
     if (!resumePug) g_PugActive = false
     emit_match_event(stopped ? "match_stop" : "match_end"); write_stats_event(stopped ? "match_stop" : "match_end")
-    take_match_screenshots(); stop_client_demos()
+    if (!screenshotTaken) take_match_screenshots()
+    stop_client_demos()
     new labelA[MAX_TEAM_LABEL + 1], labelB[MAX_TEAM_LABEL + 1]
     get_team_label(0, labelA, charsmax(labelA)); get_team_label(1, labelB, charsmax(labelB))
     if (total_score_a() == total_score_b()) announce_ml("CW_MATCH_DRAW", labelA, total_score_a(), total_score_b(), labelB)
@@ -2474,7 +2604,7 @@ stock finish_match(bool:stopped)
     restore_legacy_record_mode(); clear_crossmap_state(); discard_series_manifest()
     if (resumePug)
     {
-        if (!schedule_persistent_pug_advance()) set_task(8.0, "task_return_to_warmup", TASK_WARMUP)
+        if (!schedule_persistent_pug_advance(resumePugStyle)) set_task(8.0, "task_return_to_warmup", TASK_WARMUP)
     }
 }
 
@@ -2551,7 +2681,7 @@ stock bool:next_mapcycle_pair(const current[], nextMap[], nextLength, followingM
     return true
 }
 
-stock bool:schedule_persistent_pug_advance()
+stock bool:schedule_persistent_pug_advance(const frozenStyle[])
 {
     new current[MAX_MAP_TOKEN + 1], nextMap[MAX_MAP_TOKEN + 1], followingMap[MAX_MAP_TOKEN + 1], style[16]
     get_mapname(current, charsmax(current))
@@ -2560,7 +2690,7 @@ stock bool:schedule_persistent_pug_advance()
         log_amx("Persistent PUG could not advance: mapcyclefile has no different installed next map")
         return false
     }
-    get_pcvar_string(g_CvarPugStyle, style, charsmax(style)); strtolower(style)
+    copy(style, charsmax(style), frozenStyle); strtolower(style)
     if (!equal(style, "random") && !equal(style, "manual")) return false
 
     clear_pug_resume_state()
@@ -2827,7 +2957,11 @@ stock bool:validate_phase_config(cvar, const phase[])
 stock execute_phase_config(cvar, const phase[])
 {
     new token[MAX_CONFIG_TOKEN + 1]
-    get_pcvar_string(cvar, token, charsmax(token))
+    if (cvar == g_CvarWarmupConfig) series_extra_string(SC_WARMUP_CONFIG, cvar, token, charsmax(token))
+    else if (cvar == g_CvarMatchConfig) series_extra_string(SC_MATCH_CONFIG, cvar, token, charsmax(token))
+    else if (cvar == g_CvarOvertimeConfig) series_extra_string(SC_OVERTIME_CONFIG, cvar, token, charsmax(token))
+    else if (cvar == g_CvarDefaultConfig) series_extra_string(SC_DEFAULT_CONFIG, cvar, token, charsmax(token))
+    else get_pcvar_string(cvar, token, charsmax(token))
     if (!token[0]) return
     if (!valid_simple_token(token, MAX_CONFIG_TOKEN))
     {
@@ -2878,7 +3012,7 @@ stock refresh_branding(bool:logInvalid)
 {
     new value[128]
 
-    get_pcvar_string(g_CvarDisplayName, value, charsmax(value)); trim(value)
+    series_managed_string(MC_DISPLAY_NAME, g_CvarDisplayName, value, charsmax(value)); trim(value)
     if (valid_display_token(value, MAX_DISPLAY_NAME)) copy(g_DisplayName, charsmax(g_DisplayName), value)
     else
     {
@@ -2886,7 +3020,7 @@ stock refresh_branding(bool:logInvalid)
         if (logInvalid) log_amx("Rejected unsafe or empty display name; using package default")
     }
 
-    get_pcvar_string(g_CvarChatPrefix, value, charsmax(value)); trim(value)
+    series_managed_string(MC_CHAT_PREFIX, g_CvarChatPrefix, value, charsmax(value)); trim(value)
     if (valid_display_token(value, MAX_CHAT_PREFIX)) copy(g_ChatPrefix, charsmax(g_ChatPrefix), value)
     else
     {
@@ -2907,9 +3041,9 @@ stock snapshot_environment()
 stock apply_environment(bool:logChanges)
 {
     new value[128]
-    if (get_pcvar_num(g_CvarSetHostname))
+    if (series_extra_number(SC_SET_HOSTNAME, g_CvarSetHostname))
     {
-        get_pcvar_string(g_CvarHostname, value, charsmax(value))
+        series_extra_string(SC_HOSTNAME, g_CvarHostname, value, charsmax(value))
         if (valid_runtime_cvar_value(value, 127))
         {
             set_cvar_string("hostname", value)
@@ -2917,10 +3051,10 @@ stock apply_environment(bool:logChanges)
         }
         else log_amx("Rejected invalid managed hostname")
     }
-    if (get_pcvar_num(g_CvarSetPassword))
+    if (series_extra_number(SC_SET_PASSWORD, g_CvarSetPassword))
     {
         new password[64]
-        get_pcvar_string(g_CvarPassword, password, charsmax(password))
+        series_extra_string(SC_PASSWORD, g_CvarPassword, password, charsmax(password))
         if (valid_runtime_cvar_value(password, 63))
         {
             set_cvar_string("sv_password", password)
@@ -2928,12 +3062,12 @@ stock apply_environment(bool:logChanges)
         }
         else log_amx("Rejected invalid managed password (redacted)")
     }
-    if (get_pcvar_num(g_CvarDisableShield) && cvar_exists("sv_allow_shield"))
+    if (series_extra_number(SC_DISABLE_SHIELD, g_CvarDisableShield) && cvar_exists("sv_allow_shield"))
     {
         set_cvar_num("sv_allow_shield", 0)
         if (logChanges) log_amx("Disabled tactical shield")
     }
-    g_ShieldRestricted = bool:get_pcvar_num(g_CvarDisableShield)
+    g_ShieldRestricted = bool:series_extra_number(SC_DISABLE_SHIELD, g_CvarDisableShield)
     if (g_ShieldRestricted)
     {
         for (new id = 1; id <= MAX_PLAYERS; id++)
@@ -2979,7 +3113,7 @@ stock bool:persist_crossmap_state()
     set_localinfo(LI_PUG_ACTIVE, g_PugActive ? "1" : "0")
     if (g_PugActive)
     {
-        get_pcvar_string(g_CvarPugStyle, value, charsmax(value)); set_localinfo(LI_PUG_STYLE, value)
+        series_managed_string(MC_PUG_STYLE, g_CvarPugStyle, value, charsmax(value)); set_localinfo(LI_PUG_STYLE, value)
     }
     else set_localinfo(LI_PUG_STYLE, "")
     set_localinfo(LI_LEGACY_RECORD, g_LegacyRecordOverride ? "1" : "0")
@@ -2990,41 +3124,86 @@ stock bool:persist_crossmap_state()
     return true
 }
 
-stock bool:restore_crossmap_record_state()
+stock bool:parse_crossmap_envelope()
 {
-    new active[4], value[16]
-    get_localinfo(LI_LEGACY_RECORD, active, charsmax(active))
-    if (!equal(active, "0") && !equal(active, "1")) return false
-    if (equal(active, "0"))
+    new active[4], expected[MAX_MAP_TOKEN + 1], current[MAX_MAP_TOKEN + 1]
+    new storedMatchId[MAX_MATCH_ID + 1], scoreAValue[16], scoreBValue[16], envSaved[4]
+    new oldHostname[128], oldPassword[64], oldShield[8], sideValue[8]
+    new pugValue[4], pugStyle[16], legacyValue[4], legacyClientValue[8]
+    new legacyHltvEnabledValue[8], legacyHltvAutoValue[8]
+    new scoreA, scoreB, side, pugActive, legacyActive, legacyClient, legacyHltvEnabled, legacyHltvAuto
+
+    get_localinfo(LI_ACTIVE, active, charsmax(active))
+    get_localinfo(LI_MAP, expected, charsmax(expected)); get_mapname(current, charsmax(current))
+    get_localinfo(LI_MATCH_ID, storedMatchId, charsmax(storedMatchId))
+    get_localinfo(LI_SCORE_A, scoreAValue, charsmax(scoreAValue)); get_localinfo(LI_SCORE_B, scoreBValue, charsmax(scoreBValue))
+    get_localinfo(LI_ENV_SAVED, envSaved, charsmax(envSaved))
+    get_localinfo(LI_OLD_HOST, oldHostname, charsmax(oldHostname)); get_localinfo(LI_OLD_PASS, oldPassword, charsmax(oldPassword))
+    get_localinfo(LI_OLD_SHIELD, oldShield, charsmax(oldShield)); get_localinfo(LI_TEAM_A_SIDE, sideValue, charsmax(sideValue))
+    get_localinfo(LI_PUG_ACTIVE, pugValue, charsmax(pugValue)); get_localinfo(LI_PUG_STYLE, pugStyle, charsmax(pugStyle)); strtolower(pugStyle)
+    get_localinfo(LI_LEGACY_RECORD, legacyValue, charsmax(legacyValue))
+    get_localinfo(LI_LEGACY_CLIENT, legacyClientValue, charsmax(legacyClientValue))
+    get_localinfo(LI_LEGACY_HLTV_ENABLED, legacyHltvEnabledValue, charsmax(legacyHltvEnabledValue))
+    get_localinfo(LI_LEGACY_HLTV_AUTO, legacyHltvAutoValue, charsmax(legacyHltvAutoValue))
+
+    if (!equal(active, "1") || !parse_series_manifest() || !valid_match_id_exact(storedMatchId) ||
+        !equal(storedMatchId, g_RestoreMatchId) || !valid_map_token(expected) || !equali(expected, current) ||
+        !equali(expected, g_SeriesRestoreValues[_:MC_MAP2])) return false
+    if (!parse_uint_exact(scoreAValue, 0, 1000, scoreA) || !parse_uint_exact(scoreBValue, 0, 1000, scoreB) ||
+        !equal(envSaved, "1") || !valid_snapshot_value(oldHostname, 127) || !valid_snapshot_value(oldPassword, 63)) return false
+    if (oldShield[0])
     {
-        g_LegacyRecordOverride = false
-        g_LegacyOldClientDemos = 0; g_LegacyOldHltvEnabled = -1; g_LegacyOldHltvAuto = -1
-        return true
+        new shield
+        if (!parse_bool_exact(oldShield, shield)) return false
     }
-    get_localinfo(LI_LEGACY_CLIENT, value, charsmax(value)); if (!equal(value, "0") && !equal(value, "1")) return false
-    g_LegacyOldClientDemos = str_to_num(value)
-    get_localinfo(LI_LEGACY_HLTV_ENABLED, value, charsmax(value));
-    if (!equal(value, "-1") && !equal(value, "0") && !equal(value, "1")) return false
-    g_LegacyOldHltvEnabled = str_to_num(value)
-    get_localinfo(LI_LEGACY_HLTV_AUTO, value, charsmax(value));
-    if (!equal(value, "-1") && !equal(value, "0") && !equal(value, "1")) return false
-    g_LegacyOldHltvAuto = str_to_num(value)
-    g_LegacyRecordOverride = true
+    if (!parse_uint_exact(sideValue, _:CS_TEAM_T, _:CS_TEAM_CT, side) ||
+        !parse_bool_exact(pugValue, pugActive) || !parse_bool_exact(legacyValue, legacyActive) ||
+        !parse_bool_exact(legacyClientValue, legacyClient) || !parse_legacy_tristate(legacyHltvEnabledValue, legacyHltvEnabled) ||
+        !parse_legacy_tristate(legacyHltvAutoValue, legacyHltvAuto)) return false
+    if (pugActive)
+    {
+        if (!equal(pugStyle, g_SeriesRestoreValues[_:MC_PUG_STYLE]) || !str_to_num(g_SeriesRestoreValues[_:MC_PUG_MODE])) return false
+    }
+    else if (pugStyle[0]) return false
+
+    new hltvEnabledIndex = sizeof g_ManagedConfigNames + _:SC_HLTV_ENABLED
+    new hltvAutoIndex = sizeof g_ManagedConfigNames + _:SC_HLTV_AUTO_RECORD
+    if (legacyActive)
+    {
+        if ((equal(g_SeriesRestoreValues[hltvEnabledIndex], "-") && legacyHltvEnabled != -1) ||
+            (!equal(g_SeriesRestoreValues[hltvEnabledIndex], "-") && legacyHltvEnabled < 0) ||
+            (equal(g_SeriesRestoreValues[hltvAutoIndex], "-") && legacyHltvAuto != -1) ||
+            (!equal(g_SeriesRestoreValues[hltvAutoIndex], "-") && legacyHltvAuto < 0)) return false
+    }
+    else if (legacyClient != 0 || legacyHltvEnabled != -1 || legacyHltvAuto != -1) return false
+
+    g_RestoreScoreA = scoreA; g_RestoreScoreB = scoreB; g_RestoreTeamASide = CsTeams:side
+    copy(g_RestoreOldHostname, charsmax(g_RestoreOldHostname), oldHostname)
+    copy(g_RestoreOldPassword, charsmax(g_RestoreOldPassword), oldPassword)
+    copy(g_RestoreOldShield, charsmax(g_RestoreOldShield), oldShield)
+    g_RestorePugActive = bool:pugActive; copy(g_RestorePugStyle, charsmax(g_RestorePugStyle), pugStyle)
+    g_RestoreLegacyRecord = bool:legacyActive; g_RestoreLegacyClient = legacyClient
+    g_RestoreLegacyHltvEnabled = legacyHltvEnabled; g_RestoreLegacyHltvAuto = legacyHltvAuto
     return true
 }
 
-stock load_env_snapshot()
+stock commit_crossmap_envelope()
 {
-    new saved[4]
-    get_localinfo(LI_OLD_HOST, g_OldHostname, charsmax(g_OldHostname))
-    get_localinfo(LI_OLD_PASS, g_OldPassword, charsmax(g_OldPassword))
-    get_localinfo(LI_OLD_SHIELD, g_OldShield, charsmax(g_OldShield))
-    get_localinfo(LI_ENV_SAVED, saved, charsmax(saved)); g_EnvironmentSaved = bool:equal(saved, "1")
-}
-
-stock restore_crossmap_environment()
-{
-    load_env_snapshot(); restore_environment()
+    commit_series_manifest()
+    g_PreviousMapScoreA = g_RestoreScoreA; g_PreviousMapScoreB = g_RestoreScoreB
+    g_MapNumber = 2; g_MapCount = 2; g_TeamAScore = 0; g_TeamBScore = 0
+    g_Half = 1; g_RoundsThisHalf = 0; g_HalfStartA = 0; g_HalfStartB = 0
+    g_InOvertime = false; g_OvertimeCycle = 0; g_TeamASide = g_RestoreTeamASide
+    copy(g_OldHostname, charsmax(g_OldHostname), g_RestoreOldHostname)
+    copy(g_OldPassword, charsmax(g_OldPassword), g_RestoreOldPassword)
+    copy(g_OldShield, charsmax(g_OldShield), g_RestoreOldShield)
+    g_EnvironmentSaved = true
+    g_PugActive = g_RestorePugActive
+    if (g_PugActive) set_pcvar_string(g_CvarPugStyle, g_RestorePugStyle)
+    g_LegacyRecordOverride = g_RestoreLegacyRecord
+    g_LegacyOldClientDemos = g_RestoreLegacyClient
+    g_LegacyOldHltvEnabled = g_RestoreLegacyHltvEnabled
+    g_LegacyOldHltvAuto = g_RestoreLegacyHltvAuto
 }
 
 stock clear_crossmap_state()
@@ -3044,7 +3223,7 @@ stock create_match_id() { get_time("%Y%m%d_%H%M%S", g_MatchId, charsmax(g_MatchI
 
 stock start_client_demos()
 {
-    if (!get_pcvar_num(g_CvarClientDemos)) return
+    if (!series_extra_number(SC_CLIENT_DEMOS, g_CvarClientDemos)) return
     for (new id = 1; id <= MAX_PLAYERS; id++)
     {
         start_client_demo(id)
@@ -3072,7 +3251,7 @@ stock stop_client_demos()
 
 stock take_match_screenshots()
 {
-    if (get_pcvar_num(g_CvarScreenshots))
+    if (series_managed_number(MC_SCREENSHOTS, g_CvarScreenshots))
     {
         for (new id = 1; id <= MAX_PLAYERS; id++)
         {
@@ -3080,12 +3259,13 @@ stock take_match_screenshots()
         }
         log_amx("Requested opt-in client score screenshots")
     }
-    if (!get_pcvar_num(g_CvarScoreIdScreenshots)) return
+    if (!series_managed_number(MC_SCOREID_SCREENSHOTS, g_CvarScoreIdScreenshots)) return
     for (new id = 1; id <= MAX_PLAYERS; id++)
     {
         if (!is_user_connected(id) || is_user_bot(id) || is_user_hltv(id) || !(get_user_flags(id) & ADMIN_CFG)) continue
         show_identity_motd(id)
         remove_task(TASK_SCOREID_SNAPSHOT + id)
+        g_ScoreIdSnapshotAuthorized[id] = true
         set_task(0.8, "task_scoreid_snapshot", TASK_SCOREID_SNAPSHOT + id)
     }
     log_amx("Requested opt-in admin identity screenshots")
@@ -3124,7 +3304,7 @@ stock audit_event(const event[])
 
 stock write_stats_event(const event[])
 {
-    if (!get_pcvar_num(g_CvarFileStats) || !g_MatchId[0]) return
+    if (!series_extra_number(SC_FILE_STATS, g_CvarFileStats) || !g_MatchId[0]) return
     new dataDir[128], directory[192], path[256], timestamp[32], line[384]
     get_localinfo("amxx_datadir", dataDir, charsmax(dataDir))
     formatex(directory, charsmax(directory), "%s/kgb_clan_war", dataDir); mkdir(directory)
@@ -3215,7 +3395,7 @@ stock toggle_team_a_side() { g_TeamASide = g_TeamASide == CS_TEAM_CT ? CS_TEAM_T
 stock bool:automatic_swaps_enabled()
 {
     new value[16]
-    get_pcvar_string(g_CvarSwapPolicy, value, charsmax(value)); strtolower(value)
+    series_managed_string(MC_SWAP_POLICY, g_CvarSwapPolicy, value, charsmax(value)); strtolower(value)
     return bool:equal(value, "halves")
 }
 stock identity_for_side(CsTeams:side)
@@ -3246,7 +3426,7 @@ stock cancel_transition_tasks()
 {
     cancel_lo3_tasks(); remove_task(TASK_HALFTIME); remove_task(TASK_WARMUP)
     g_CaptureHalfBaselineAfterLo3 = false; g_ResetTlTimerAfterLo3 = false; g_TimeLimitExpired = false
-    remove_task(TASK_KNIFE_VOTE); remove_task(TASK_OVERTIME_VOTE); remove_task(TASK_PLAYOUT_VOTE); remove_task(TASK_TIME_LIMIT); remove_task(TASK_MAP_CHANGE); remove_task(TASK_PUG_MAP_CHANGE)
+    remove_task(TASK_KNIFE_VOTE); remove_task(TASK_OVERTIME_VOTE); remove_task(TASK_PLAYOUT_VOTE); remove_task(TASK_TIME_LIMIT); remove_task(TASK_TL_ROUND_END); remove_task(TASK_MAP_CHANGE); remove_task(TASK_PUG_MAP_CHANGE)
     for (new id = 1; id <= MAX_PLAYERS; id++) remove_task(TASK_KNIFE_EQUIP + id)
 }
 
@@ -3259,13 +3439,13 @@ stock cancel_lo3_tasks()
 stock schedule_time_limit_half()
 {
     remove_task(TASK_TIME_LIMIT)
-    set_task(float(clamp(get_pcvar_num(g_CvarTimeLimitMinutes), 1, 180)) * 60.0, "task_time_limit_half", TASK_TIME_LIMIT)
+    set_task(float(clamp(series_managed_number(MC_TIME_LIMIT, g_CvarTimeLimitMinutes), 1, 180)) * 60.0, "task_time_limit_half", TASK_TIME_LIMIT)
 }
 
 stock schedule_status_hud()
 {
     remove_task(TASK_STATUS_HUD)
-    new interval = get_pcvar_num(g_CvarHudInterval)
+    new interval = series_managed_number(MC_HUD_INTERVAL, g_CvarHudInterval)
     if (interval > 0) set_task(float(clamp(interval, 3, 60)), "task_status_hud", TASK_STATUS_HUD)
 }
 
@@ -3352,7 +3532,7 @@ stock announce_ml(const key[], any:...)
         LookupLangKey(translated, charsmax(translated), key, language)
         vformat(message, charsmax(message), translated, 2)
         client_print(id, print_chat, "%s %s", g_ChatPrefix, message)
-        if (get_pcvar_num(g_CvarHudAnnouncements))
+        if (series_extra_number(SC_HUD_ANNOUNCEMENTS, g_CvarHudAnnouncements))
         {
             set_hudmessage(0, 180, 255, -1.0, 0.18, 0, 1.0, 4.0, 0.1, 0.2, -1)
             show_hudmessage(id, "%s %s", g_ChatPrefix, message)

@@ -28,6 +28,11 @@ fix and disclosure when the report is confirmed.
 - SQL player statistics contain Steam authentication IDs and player names.
   Restrict access and define a privacy notice, retention period, and deletion
   process appropriate to the server's users and jurisdiction.
+- Local file statistics are disabled by default. Enabling `kgb_cw_file_stats`
+  writes player names, Steam authentication IDs, user IDs, teams, and scores
+  beneath `addons/amxmodx/data/kgb_clan_war/`. Those files have no automatic
+  rotation or deletion; restrict filesystem access and enforce the same notice,
+  retention, and deletion policy.
 - Client-side demo and screenshot requests and server hostname/password
   changes are opt-in because they affect players or server access.
 - Release builds use a digest-pinned build container, checksum-verified AMX Mod
