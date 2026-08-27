@@ -6,7 +6,7 @@
 #include <fun>
 
 #define PLUGIN_NAME "KGB Clan War"
-#define PLUGIN_VERSION "0.2.0"
+#define PLUGIN_VERSION "0.3.0"
 #define PLUGIN_AUTHOR "KGB Hosting"
 
 #define DEFAULT_DISPLAY_NAME "KGB Clan War"
@@ -22,6 +22,8 @@
 #define MAX_DISPLAY_NAME 47
 #define MAX_CHAT_PREFIX 23
 #define MAX_BRANDED_MESSAGE 165
+#define MAX_PRESET_TOKEN 31
+#define MAX_CATALOG_LABEL 63
 
 #define TASK_LO3_1 73101
 #define TASK_LO3_2 73102
@@ -33,6 +35,7 @@
 #define TASK_TIME_LIMIT 73108
 #define TASK_MAP_CHANGE 73109
 #define TASK_RESUME_MAP 73110
+#define TASK_OVERTIME_VOTE 73111
 #define TASK_KNIFE_EQUIP 73200
 
 #define LI_ACTIVE "_kgbcw_active"
@@ -46,7 +49,7 @@
 #define LI_ENV_SAVED "_kgbcw_env_saved"
 #define LI_TEAM_A_SIDE "_kgbcw_a_side"
 
-enum MatchState { STATE_OFF = 0, STATE_WARMUP, STATE_KNIFE, STATE_KNIFE_VOTE, STATE_LIVE, STATE_HALFTIME, STATE_FINISHED }
+enum MatchState { STATE_OFF = 0, STATE_WARMUP, STATE_KNIFE, STATE_KNIFE_VOTE, STATE_LIVE, STATE_HALFTIME, STATE_OVERTIME_VOTE, STATE_FINISHED }
 enum MatchFormat { FORMAT_MR = 0, FORMAT_TL, FORMAT_WL }
 enum ReadyMode { READY_PLAYER = 0, READY_TEAM, READY_ADMIN }
 
@@ -63,6 +66,11 @@ new bool:g_Ready[MAX_PLAYERS + 1], bool:g_TeamReady[2]
 new bool:g_DemoStarted[MAX_PLAYERS + 1]
 new bool:g_EnvironmentSaved, bool:g_MapChangePending, bool:g_KnifeDecisionMade
 new bool:g_ShieldRestricted
+new bool:g_OvertimeVoted[MAX_PLAYERS + 1], bool:g_PugActive
+new g_OvertimeVoteChoice[MAX_PLAYERS + 1]
+new g_OvertimeYesVotes, g_OvertimeNoVotes
+new bool:g_MapMenuSecond[MAX_PLAYERS + 1]
+new g_MapMenuFirst[MAX_PLAYERS + 1][MAX_MAP_TOKEN + 1]
 
 new g_MapNumber = 1, g_MapCount = 1
 new g_Map1[MAX_MAP_TOKEN + 1], g_Map2[MAX_MAP_TOKEN + 1]
@@ -88,12 +96,15 @@ new g_CvarTeamAName, g_CvarTeamBName, g_CvarTeamATag, g_CvarTeamBTag
 new g_CvarMap1, g_CvarMap2, g_CvarMapCount
 new g_CvarWarmupConfig, g_CvarMatchConfig, g_CvarOvertimeConfig, g_CvarDefaultConfig
 new g_CvarHalftimeDelay, g_CvarKnifeVote, g_CvarKnifeVoteSeconds, g_CvarPugMode
+new g_CvarOvertimeVote, g_CvarOvertimeVoteSeconds, g_CvarOvertimeVoteDefault
+new g_CvarPugStyle, g_CvarAllowMenuSave
 new g_CvarSetHostname, g_CvarHostname, g_CvarSetPassword, g_CvarPassword, g_CvarDisableShield
 new g_CvarClientDemos, g_CvarScreenshots, g_CvarFileStats
 
 public plugin_init()
 {
     register_plugin(PLUGIN_NAME, PLUGIN_VERSION, PLUGIN_AUTHOR)
+    register_dictionary("kgb_clan_war.txt")
     register_cvar("kgb_cw_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
 
     g_CvarEnabled = register_cvar("kgb_cw_enabled", "1")
@@ -111,6 +122,9 @@ public plugin_init()
     g_CvarOvertimeMaxCycles = register_cvar("kgb_cw_overtime_max_cycles", "3")
     g_CvarOvertimeHalfRounds = register_cvar("kgb_cw_overtime_half_rounds", "3")
     g_CvarOvertimeMoney = register_cvar("kgb_cw_overtime_money", "10000")
+    g_CvarOvertimeVote = register_cvar("kgb_cw_overtime_vote", "0")
+    g_CvarOvertimeVoteSeconds = register_cvar("kgb_cw_overtime_vote_seconds", "15")
+    g_CvarOvertimeVoteDefault = register_cvar("kgb_cw_overtime_vote_default", "1")
     g_CvarHudAnnouncements = register_cvar("kgb_cw_hud_announcements", "1")
     g_CvarState = register_cvar("kgb_cw_state", "off", FCVAR_SERVER)
 
@@ -130,6 +144,8 @@ public plugin_init()
     g_CvarKnifeVote = register_cvar("kgb_cw_knife_vote", "1")
     g_CvarKnifeVoteSeconds = register_cvar("kgb_cw_knife_vote_seconds", "15")
     g_CvarPugMode = register_cvar("kgb_cw_pug_mode", "0")
+    g_CvarPugStyle = register_cvar("kgb_cw_pug_style", "random")
+    g_CvarAllowMenuSave = register_cvar("kgb_cw_allow_menu_save", "0")
 
     /* Risky or client-affecting behavior is opt-in. */
     g_CvarSetHostname = register_cvar("kgb_cw_set_hostname", "0")
@@ -150,11 +166,21 @@ public plugin_init()
     register_concmd("amx_cw_restart_half", "command_restart_half", ADMIN_CFG, "- reset the current half")
     register_concmd("amx_cw_restart_match", "command_restart_match", ADMIN_CFG, "- reset the whole match")
     register_concmd("amx_cw_pug_randomize", "command_pug_randomize", ADMIN_CFG, "- randomly balance warmup players")
+    register_concmd("amx_cw_pug_start", "command_pug_start", ADMIN_CFG, "[random|manual]")
+    register_concmd("amx_cw_pug_assign", "command_pug_assign", ADMIN_CFG, "<player> <a|b>")
+    register_concmd("amx_cw_pug_stop", "command_pug_stop", ADMIN_CFG, "- stop the active PUG")
+    register_concmd("amx_cw_config_menu", "command_config_menu", ADMIN_CFG, "- open preset/map/save controls")
+    register_concmd("amx_cw_presets", "command_preset_menu", ADMIN_CFG, "- choose an installed league preset")
+    register_concmd("amx_cw_preset", "command_preset", ADMIN_CFG, "<preset>")
+    register_concmd("amx_cw_map_menu", "command_map_menu", ADMIN_CFG, "- choose default maps")
+    register_concmd("amx_cw_save_config", "command_save_config", ADMIN_CFG, "- save an allowlisted menu snapshot")
+    register_concmd("amx_cw_load_saved", "command_load_saved", ADMIN_CFG, "- load the saved menu snapshot")
     register_concmd("amx_cw_teams", "command_teams", ADMIN_CFG, "<team-a> <team-b>")
     register_concmd("amx_cw_tags", "command_tags", ADMIN_CFG, "<tag-a> <tag-b>")
     register_concmd("amx_cw_maps", "command_maps", ADMIN_CFG, "<map1> [map2]")
     register_concmd("amx_cw_stop", "command_stop", ADMIN_CFG, "- stop and restore server")
     register_concmd("amx_cw_score", "command_score", 0, "- show score")
+    register_concmd("amx_cw_scoreids", "command_scoreids", ADMIN_CFG, "- show score and player SteamIDs in the admin console")
     register_concmd("amx_cw_status", "command_status", 0, "- show detailed status")
     register_clcmd("say", "command_say")
     register_clcmd("say_team", "command_say")
@@ -194,13 +220,26 @@ public client_putinserver(id)
     clear_client_state(id)
     if (g_State == STATE_LIVE && get_pcvar_num(g_CvarClientDemos)) start_client_demo(id)
 }
-public client_disconnected(id) { clear_client_state(id); }
+public client_disconnected(id)
+{
+    if (g_State == STATE_OVERTIME_VOTE && g_OvertimeVoted[id])
+    {
+        if (g_OvertimeVoteChoice[id] == 1 && g_OvertimeYesVotes > 0) g_OvertimeYesVotes--
+        else if (g_OvertimeVoteChoice[id] == 2 && g_OvertimeNoVotes > 0) g_OvertimeNoVotes--
+    }
+    clear_client_state(id)
+    if (g_State == STATE_OVERTIME_VOTE && overtime_vote_count() >= overtime_eligible_count()) finish_overtime_vote()
+}
 
 stock clear_client_state(id)
 {
     g_Ready[id] = false
     g_DemoStarted[id] = false
     g_KnifeVoted[id] = false
+    g_OvertimeVoted[id] = false
+    g_OvertimeVoteChoice[id] = 0
+    g_MapMenuSecond[id] = false
+    g_MapMenuFirst[id][0] = 0
 }
 
 public command_menu(id, level, cid)
@@ -238,7 +277,7 @@ public command_relo3(id, level, cid)
 public command_swap(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
-    if (g_Lo3Running || g_State == STATE_HALFTIME) cw_console(id, "A transition is in progress.")
+    if (g_Lo3Running || g_State == STATE_HALFTIME || g_State == STATE_OVERTIME_VOTE) cw_console(id, "A transition is in progress.")
     else
     {
         swap_players()
@@ -274,6 +313,139 @@ public command_pug_randomize(id, level, cid)
     else if (g_State != STATE_OFF && g_State != STATE_WARMUP) cw_console(id, "Randomization is only safe while off or warming up.")
     else randomize_pug_teams()
     return PLUGIN_HANDLED
+}
+
+public command_pug_start(id, level, cid)
+{
+    if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (!get_pcvar_num(g_CvarPugMode))
+    {
+        cw_console(id, "Set kgb_cw_pug_mode 1 to opt in.")
+        return PLUGIN_HANDLED
+    }
+    if (g_State != STATE_OFF && g_State != STATE_WARMUP)
+    {
+        cw_console(id, "A PUG can only start while off or warming up.")
+        return PLUGIN_HANDLED
+    }
+
+    new style[16]
+    if (read_argc() > 1) read_argv(1, style, charsmax(style))
+    else get_pcvar_string(g_CvarPugStyle, style, charsmax(style))
+    strtolower(style)
+    if (!equal(style, "random") && !equal(style, "manual"))
+    {
+        cw_console(id, "PUG style must be random or manual.")
+        return PLUGIN_HANDLED
+    }
+
+    set_pcvar_string(g_CvarPugStyle, style)
+    start_warmup(true)
+    g_PugActive = true
+    if (equal(style, "random")) randomize_pug_teams()
+    else announce("Manual PUG draft started. An admin can assign players with amx_cw_pug_assign.")
+    audit_event("pug_start")
+    return PLUGIN_HANDLED
+}
+
+public command_pug_assign(id, level, cid)
+{
+    if (!cmd_access(id, level, cid, 3) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (!get_pcvar_num(g_CvarPugMode) || !g_PugActive || g_State != STATE_WARMUP)
+    {
+        cw_console(id, "Manual assignments require an active PUG warmup.")
+        return PLUGIN_HANDLED
+    }
+
+    new playerArg[32], teamArg[8]
+    read_argv(1, playerArg, charsmax(playerArg)); read_argv(2, teamArg, charsmax(teamArg)); strtolower(teamArg)
+    new target = cmd_target(id, playerArg, CMDTARGET_NO_BOTS)
+    if (!target || (!equal(teamArg, "a") && !equal(teamArg, "b")))
+    {
+        cw_console(id, "Usage: amx_cw_pug_assign <player> <a|b>")
+        return PLUGIN_HANDLED
+    }
+
+    new CsTeams:destination = equal(teamArg, "a") ? g_TeamASide : (g_TeamASide == CS_TEAM_CT ? CS_TEAM_T : CS_TEAM_CT)
+    if (is_user_alive(target)) user_silentkill(target)
+    cs_set_user_team(target, destination)
+    reset_ready_players()
+    new name[32]
+    get_user_name(target, name, charsmax(name))
+    announce("%s was assigned to %s.", name, equal(teamArg, "a") ? g_TeamAName : g_TeamBName)
+    audit_event("pug_assign")
+    return PLUGIN_HANDLED
+}
+
+public command_pug_stop(id, level, cid)
+{
+    if (!cmd_access(id, level, cid, 1)) return PLUGIN_HANDLED
+    if (!g_PugActive) cw_console(id, "No PUG session is active.")
+    else
+    {
+        g_PugActive = false
+        stop_match(true)
+        audit_event("pug_stop")
+    }
+    return PLUGIN_HANDLED
+}
+
+public command_config_menu(id, level, cid)
+{
+    if (cmd_access(id, level, cid, 1) && mode_enabled(id)) show_config_menu(id)
+    return PLUGIN_HANDLED
+}
+
+public command_preset_menu(id, level, cid)
+{
+    if (cmd_access(id, level, cid, 1) && mode_enabled(id)) show_preset_menu(id)
+    return PLUGIN_HANDLED
+}
+
+public command_preset(id, level, cid)
+{
+    if (!cmd_access(id, level, cid, 2) || !mode_enabled(id)) return PLUGIN_HANDLED
+    new preset[MAX_PRESET_TOKEN + 1]
+    read_argv(1, preset, charsmax(preset)); strtolower(preset)
+    apply_preset(id, preset)
+    return PLUGIN_HANDLED
+}
+
+public command_map_menu(id, level, cid)
+{
+    if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
+    g_MapMenuSecond[id] = false; g_MapMenuFirst[id][0] = 0
+    show_map_menu(id)
+    return PLUGIN_HANDLED
+}
+
+public command_save_config(id, level, cid)
+{
+    if (cmd_access(id, level, cid, 1) && mode_enabled(id)) save_menu_config(id)
+    return PLUGIN_HANDLED
+}
+
+public command_load_saved(id, level, cid)
+{
+    if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
+    load_saved_config(id)
+    return PLUGIN_HANDLED
+}
+
+stock load_saved_config(id)
+{
+    if (!safe_configuration_state(id)) return
+    new configsDir[128], path[192]
+    get_configsdir(configsDir, charsmax(configsDir))
+    formatex(path, charsmax(path), "%s/kgb_clan_war_saved.cfg", configsDir)
+    if (!file_exists(path)) cw_console(id, "No saved menu configuration exists.")
+    else
+    {
+        server_cmd("exec addons/amxmodx/configs/kgb_clan_war_saved.cfg"); server_exec()
+        refresh_branding(false)
+        if (runtime_config_valid(false)) cw_console(id, "Saved menu configuration loaded.")
+        else cw_console(id, "Saved configuration loaded but failed validation; review it before starting.")
+    }
 }
 
 public command_teams(id, level, cid)
@@ -336,6 +508,25 @@ public command_stop(id, level, cid)
 public command_score(id) { print_score(id, false); return PLUGIN_HANDLED; }
 public command_status(id) { print_score(id, true); return PLUGIN_HANDLED; }
 
+public command_scoreids(id, level, cid)
+{
+    if (!cmd_access(id, level, cid, 1)) return PLUGIN_HANDLED
+    new labelA[MAX_TEAM_LABEL + 1], labelB[MAX_TEAM_LABEL + 1]
+    get_team_label(0, labelA, charsmax(labelA)); get_team_label(1, labelB, charsmax(labelB))
+    cw_console(id, "Score: %s %d - %d %s", labelA, total_score_a(), total_score_b(), labelB)
+    cw_console(id, "Player identity report (admin console only):")
+    new players[32], count
+    get_players(players, count, "ch")
+    for (new i = 0; i < count; i++)
+    {
+        new player = players[i], name[32], authid[36], side[24]
+        get_user_name(player, name, charsmax(name)); get_user_authid(player, authid, charsmax(authid))
+        get_side_name(cs_get_user_team(player), side, charsmax(side))
+        cw_console(id, "#%d %-31s %-35s %-20s K:%d D:%d", get_user_userid(player), name, authid, side, get_user_frags(player), cs_get_user_deaths(player))
+    }
+    return PLUGIN_HANDLED
+}
+
 public command_shield_purchase(id)
 {
     if (!g_ShieldRestricted) return PLUGIN_CONTINUE
@@ -377,11 +568,106 @@ public menu_control_handler(id, menu, item)
         case 3: start_live_match(g_State == STATE_WARMUP && g_KnifeDecisionMade)
         case 4: if (g_State == STATE_LIVE) begin_lo3(false)
         case 5: print_score(id, true)
-        case 6: if (!g_Lo3Running && g_State != STATE_HALFTIME) { swap_players(); toggle_team_a_side(); announce("Teams swapped."); }
+        case 6: if (!g_Lo3Running && g_State != STATE_HALFTIME && g_State != STATE_OVERTIME_VOTE) { swap_players(); toggle_team_a_side(); announce("Teams swapped."); }
         case 7: if (get_pcvar_num(g_CvarPugMode) && (g_State == STATE_OFF || g_State == STATE_WARMUP)) randomize_pug_teams()
-        case 8: stop_match(true)
+        case 8: show_config_menu(id)
+        case 9: stop_match(true)
     }
     menu_destroy(menu)
+    return PLUGIN_HANDLED
+}
+
+public menu_config_handler(id, menu, item)
+{
+    if (item == MENU_EXIT || !(get_user_flags(id) & ADMIN_CFG) || !get_pcvar_num(g_CvarEnabled))
+    {
+        menu_destroy(menu)
+        return PLUGIN_HANDLED
+    }
+    new access, info[8], label[64], callback
+    menu_item_getinfo(menu, item, access, info, charsmax(info), label, charsmax(label), callback)
+    switch (str_to_num(info))
+    {
+        case 1: show_preset_menu(id)
+        case 2: { g_MapMenuSecond[id] = false; g_MapMenuFirst[id][0] = 0; show_map_menu(id); }
+        case 3: save_menu_config(id)
+        case 4: load_saved_config(id)
+    }
+    menu_destroy(menu)
+    return PLUGIN_HANDLED
+}
+
+public menu_preset_handler(id, menu, item)
+{
+    if (item == MENU_EXIT || !(get_user_flags(id) & ADMIN_CFG))
+    {
+        menu_destroy(menu)
+        return PLUGIN_HANDLED
+    }
+    new access, preset[MAX_PRESET_TOKEN + 1], label[MAX_CATALOG_LABEL + 1], callback
+    menu_item_getinfo(menu, item, access, preset, charsmax(preset), label, charsmax(label), callback)
+    apply_preset(id, preset)
+    menu_destroy(menu)
+    return PLUGIN_HANDLED
+}
+
+public menu_map_handler(id, menu, item)
+{
+    if (item == MENU_EXIT || !(get_user_flags(id) & ADMIN_CFG))
+    {
+        menu_destroy(menu)
+        return PLUGIN_HANDLED
+    }
+    new access, map[MAX_MAP_TOKEN + 1], label[MAX_CATALOG_LABEL + 1], callback
+    menu_item_getinfo(menu, item, access, map, charsmax(map), label, charsmax(label), callback)
+    menu_destroy(menu)
+
+    if (g_MapMenuSecond[id] && equal(map, "single"))
+    {
+        commit_menu_maps(id, g_MapMenuFirst[id], "")
+        return PLUGIN_HANDLED
+    }
+    if (!valid_map_token(map))
+    {
+        cw_console(id, "The selected catalog map is not installed.")
+        return PLUGIN_HANDLED
+    }
+    if (!g_MapMenuSecond[id])
+    {
+        copy(g_MapMenuFirst[id], charsmax(g_MapMenuFirst[]), map)
+        g_MapMenuSecond[id] = true
+        show_map_menu(id)
+    }
+    else if (equali(map, g_MapMenuFirst[id]))
+    {
+        cw_console(id, "Map 2 must differ from map 1.")
+        show_map_menu(id)
+    }
+    else commit_menu_maps(id, g_MapMenuFirst[id], map)
+    return PLUGIN_HANDLED
+}
+
+public menu_overtime_vote_handler(id, menu, item)
+{
+    if (item == MENU_EXIT || g_State != STATE_OVERTIME_VOTE || g_OvertimeVoted[id])
+    {
+        menu_destroy(menu)
+        return PLUGIN_HANDLED
+    }
+    new identity = identity_for_side(cs_get_user_team(id))
+    if (identity < 0)
+    {
+        menu_destroy(menu)
+        return PLUGIN_HANDLED
+    }
+    new access, info[8], label[64], callback
+    menu_item_getinfo(menu, item, access, info, charsmax(info), label, charsmax(label), callback)
+    g_OvertimeVoted[id] = true
+    g_OvertimeVoteChoice[id] = str_to_num(info) == 1 ? 1 : 2
+    if (g_OvertimeVoteChoice[id] == 1) g_OvertimeYesVotes++; else g_OvertimeNoVotes++
+    cw_chat_ml(id, "CW_VOTE_RECORDED")
+    menu_destroy(menu)
+    if (overtime_vote_count() >= overtime_eligible_count()) finish_overtime_vote()
     return PLUGIN_HANDLED
 }
 
@@ -446,6 +732,7 @@ public task_begin_next_half()
 
 public task_return_to_warmup() { start_warmup(false); }
 public task_finish_knife_vote() { finish_knife_vote(); }
+public task_finish_overtime_vote() { finish_overtime_vote(); }
 
 public task_time_limit_half()
 {
@@ -513,17 +800,218 @@ stock bool:mode_enabled(id)
 stock show_control_menu(id)
 {
     refresh_branding(false)
-    new menu = menu_create(g_DisplayName, "menu_control_handler")
-    menu_additem(menu, "Start warmup", "1")
-    menu_additem(menu, "Start knife round", "2")
-    menu_additem(menu, "Start match (LO3)", "3")
-    menu_additem(menu, "Repeat LO3", "4")
-    menu_additem(menu, "Show detailed status", "5")
-    menu_additem(menu, "Swap teams", "6")
-    menu_additem(menu, "Randomize PUG teams", "7")
-    menu_additem(menu, "Stop and restore", "8")
+    new menu = menu_create(g_DisplayName, "menu_control_handler"), label[64]
+    ml_text(id, "CW_MENU_WARMUP", label, charsmax(label)); menu_additem(menu, label, "1")
+    ml_text(id, "CW_MENU_KNIFE", label, charsmax(label)); menu_additem(menu, label, "2")
+    ml_text(id, "CW_MENU_LIVE", label, charsmax(label)); menu_additem(menu, label, "3")
+    ml_text(id, "CW_MENU_RELO3", label, charsmax(label)); menu_additem(menu, label, "4")
+    ml_text(id, "CW_MENU_STATUS", label, charsmax(label)); menu_additem(menu, label, "5")
+    ml_text(id, "CW_MENU_SWAP", label, charsmax(label)); menu_additem(menu, label, "6")
+    ml_text(id, "CW_MENU_PUG", label, charsmax(label)); menu_additem(menu, label, "7")
+    ml_text(id, "CW_MENU_CONFIG", label, charsmax(label)); menu_additem(menu, label, "8")
+    ml_text(id, "CW_MENU_STOP", label, charsmax(label)); menu_additem(menu, label, "9")
     menu_setprop(menu, MPROP_EXIT, MEXIT_ALL)
     menu_display(id, menu)
+}
+
+stock show_config_menu(id)
+{
+    new title[96], label[64]
+    refresh_branding(false)
+    formatex(title, charsmax(title), "%s: %L", g_DisplayName, id, "CW_CONFIG_TITLE")
+    new menu = menu_create(title, "menu_config_handler")
+    ml_text(id, "CW_CONFIG_PRESET", label, charsmax(label)); menu_additem(menu, label, "1")
+    ml_text(id, "CW_CONFIG_MAPS", label, charsmax(label)); menu_additem(menu, label, "2")
+    ml_text(id, "CW_CONFIG_SAVE", label, charsmax(label)); menu_additem(menu, label, "3")
+    ml_text(id, "CW_CONFIG_LOAD", label, charsmax(label)); menu_additem(menu, label, "4")
+    menu_setprop(menu, MPROP_EXIT, MEXIT_ALL); menu_display(id, menu)
+}
+
+stock show_preset_menu(id)
+{
+    if (!safe_configuration_state(id)) return
+    new configsDir[128], path[192]
+    get_configsdir(configsDir, charsmax(configsDir))
+    formatex(path, charsmax(path), "%s/kgb_clan_war_presets.ini", configsDir)
+    if (!file_exists(path))
+    {
+        cw_console(id, "Preset catalog is missing: addons/amxmodx/configs/kgb_clan_war_presets.ini")
+        return
+    }
+
+    new title[96]
+    refresh_branding(false); formatex(title, charsmax(title), "%s: %L", g_DisplayName, id, "CW_PRESET_TITLE")
+    new menu = menu_create(title, "menu_preset_handler")
+    new line[128], length, token[MAX_PRESET_TOKEN + 1], label[MAX_CATALOG_LABEL + 1], count
+    for (new lineNumber = 0; read_file(path, lineNumber, line, charsmax(line), length); lineNumber++)
+    {
+        trim(line)
+        if (!line[0] || line[0] == ';' || line[0] == '#') continue
+        strtok(line, token, charsmax(token), label, charsmax(label), '|')
+        trim(token); trim(label); strtolower(token)
+        if (!valid_simple_token(token, MAX_PRESET_TOKEN) || !valid_display_token(label, MAX_CATALOG_LABEL) || !preset_exists(token)) continue
+        menu_additem(menu, label, token); count++
+    }
+    if (!count)
+    {
+        menu_destroy(menu); cw_console(id, "Preset catalog contains no valid installed presets."); return
+    }
+    menu_setprop(menu, MPROP_EXIT, MEXIT_ALL); menu_display(id, menu)
+}
+
+stock show_map_menu(id)
+{
+    if (!safe_configuration_state(id)) return
+    new configsDir[128], path[192]
+    get_configsdir(configsDir, charsmax(configsDir))
+    formatex(path, charsmax(path), "%s/kgb_clan_war_maps.ini", configsDir)
+    if (!file_exists(path))
+    {
+        cw_console(id, "Map catalog is missing: addons/amxmodx/configs/kgb_clan_war_maps.ini")
+        return
+    }
+
+    new title[96]
+    refresh_branding(false)
+    formatex(title, charsmax(title), "%s: %L", g_DisplayName, id, g_MapMenuSecond[id] ? "CW_MAP_SECOND_TITLE" : "CW_MAP_FIRST_TITLE")
+    new menu = menu_create(title, "menu_map_handler"), count
+    if (g_MapMenuSecond[id])
+    {
+        new singleLabel[64]
+        ml_text(id, "CW_MAP_SINGLE", singleLabel, charsmax(singleLabel)); menu_additem(menu, singleLabel, "single")
+    }
+    new line[96], length, token[MAX_MAP_TOKEN + 1], label[MAX_CATALOG_LABEL + 1]
+    for (new lineNumber = 0; read_file(path, lineNumber, line, charsmax(line), length); lineNumber++)
+    {
+        trim(line)
+        if (!line[0] || line[0] == ';' || line[0] == '#') continue
+        strtok(line, token, charsmax(token), label, charsmax(label), '|')
+        trim(token); trim(label); strtolower(token)
+        if (!label[0]) copy(label, charsmax(label), token)
+        if (!valid_map_token(token) || !valid_display_token(label, MAX_CATALOG_LABEL)) continue
+        menu_additem(menu, label, token); count++
+    }
+    if (!count)
+    {
+        menu_destroy(menu); cw_console(id, "Map catalog contains no maps installed on this server."); return
+    }
+    menu_setprop(menu, MPROP_EXIT, MEXIT_ALL); menu_display(id, menu)
+}
+
+stock bool:safe_configuration_state(id)
+{
+    if (g_State == STATE_OFF || g_State == STATE_WARMUP) return true
+    cw_console(id, "Configuration menus are available only while off or warming up.")
+    return false
+}
+
+stock bool:preset_exists(const preset[])
+{
+    new configsDir[128], path[224]
+    get_configsdir(configsDir, charsmax(configsDir))
+    formatex(path, charsmax(path), "%s/kgb_clan_war/presets/%s.cfg", configsDir, preset)
+    return bool:file_exists(path)
+}
+
+stock apply_preset(id, const preset[])
+{
+    if (!safe_configuration_state(id)) return
+    if (!valid_simple_token(preset, MAX_PRESET_TOKEN) || !preset_exists(preset))
+    {
+        cw_console(id, "Preset must be an installed basename from the managed catalog.")
+        return
+    }
+    server_cmd("exec addons/amxmodx/configs/kgb_clan_war/presets/%s.cfg", preset); server_exec()
+    refresh_branding(false)
+    if (!runtime_config_valid(false))
+    {
+        cw_console(id, "Preset executed but failed runtime validation; do not start the match.")
+        return
+    }
+    cw_console(id, "Preset applied: %s", preset); audit_event("preset_applied")
+}
+
+stock commit_menu_maps(id, const map1[], const map2[])
+{
+    set_pcvar_string(g_CvarMap1, map1); set_pcvar_string(g_CvarMap2, map2)
+    set_pcvar_num(g_CvarMapCount, map2[0] ? 2 : 1)
+    g_MapMenuSecond[id] = false; g_MapMenuFirst[id][0] = 0
+    cw_console(id, "Maps: %s%s%s", map1, map2[0] ? ", " : "", map2)
+}
+
+stock save_menu_config(id)
+{
+    if (!safe_configuration_state(id)) return
+    if (!get_pcvar_num(g_CvarAllowMenuSave))
+    {
+        cw_console(id, "Set kgb_cw_allow_menu_save 1 to permit the managed snapshot file.")
+        return
+    }
+    if (!runtime_config_valid(false))
+    {
+        cw_console(id, "Current configuration failed validation and was not saved.")
+        return
+    }
+    new displayName[MAX_DISPLAY_NAME + 1], chatPrefix[MAX_CHAT_PREFIX + 1]
+    get_pcvar_string(g_CvarDisplayName, displayName, charsmax(displayName)); trim(displayName)
+    get_pcvar_string(g_CvarChatPrefix, chatPrefix, charsmax(chatPrefix)); trim(chatPrefix)
+    if (!valid_display_token(displayName, MAX_DISPLAY_NAME) || !valid_display_token(chatPrefix, MAX_CHAT_PREFIX))
+    {
+        cw_console(id, "Branding failed validation and the snapshot was not saved.")
+        return
+    }
+    new configsDir[128], path[192]
+    get_configsdir(configsDir, charsmax(configsDir)); formatex(path, charsmax(path), "%s/kgb_clan_war_saved.cfg", configsDir)
+    if (file_exists(path) && !delete_file(path))
+    {
+        cw_console(id, "The existing managed snapshot could not be replaced.")
+        return
+    }
+    write_file(path, "; Generated by KGB Clan War. Contains only the allowlisted non-secret menu snapshot.")
+    save_string_cvar(path, "kgb_cw_display_name", g_CvarDisplayName)
+    save_string_cvar(path, "kgb_cw_chat_prefix", g_CvarChatPrefix)
+    save_string_cvar(path, "kgb_cw_format", g_CvarFormat)
+    save_number_cvar(path, "kgb_cw_half_rounds", g_CvarHalfRounds)
+    save_number_cvar(path, "kgb_cw_win_rounds", g_CvarWinRounds)
+    save_number_cvar(path, "kgb_cw_time_limit_minutes", g_CvarTimeLimitMinutes)
+    save_number_cvar(path, "kgb_cw_playout", g_CvarPlayout)
+    save_number_cvar(path, "kgb_cw_overtime", g_CvarOvertime)
+    save_number_cvar(path, "kgb_cw_overtime_vote", g_CvarOvertimeVote)
+    save_number_cvar(path, "kgb_cw_overtime_half_rounds", g_CvarOvertimeHalfRounds)
+    save_number_cvar(path, "kgb_cw_overtime_money", g_CvarOvertimeMoney)
+    save_string_cvar(path, "kgb_cw_ready_mode", g_CvarReadyMode)
+    save_number_cvar(path, "kgb_cw_min_ready", g_CvarMinReady)
+    save_string_cvar(path, "kgb_cw_team_a_name", g_CvarTeamAName)
+    save_string_cvar(path, "kgb_cw_team_b_name", g_CvarTeamBName)
+    save_string_cvar(path, "kgb_cw_team_a_tag", g_CvarTeamATag)
+    save_string_cvar(path, "kgb_cw_team_b_tag", g_CvarTeamBTag)
+    save_string_cvar(path, "kgb_cw_map1", g_CvarMap1)
+    save_string_cvar(path, "kgb_cw_map2", g_CvarMap2)
+    save_number_cvar(path, "kgb_cw_map_count", g_CvarMapCount)
+    cw_console(id, "Saved allowlisted configuration to addons/amxmodx/configs/kgb_clan_war_saved.cfg")
+}
+
+stock save_string_cvar(const path[], const name[], cvar)
+{
+    new value[128], line[192]
+    get_pcvar_string(cvar, value, charsmax(value)); formatex(line, charsmax(line), "%s ^"%s^"", name, value); write_file(path, line)
+}
+
+stock save_number_cvar(const path[], const name[], cvar)
+{
+    new line[96]
+    formatex(line, charsmax(line), "%s %d", name, get_pcvar_num(cvar)); write_file(path, line)
+}
+
+stock ml_text(id, const key[], output[], length)
+{
+    formatex(output, length, "%L", id > 0 ? id : LANG_SERVER, key)
+}
+
+stock cw_chat_ml(id, const key[])
+{
+    refresh_branding(false)
+    client_print(id, print_chat, "%s %L", g_ChatPrefix, id, key)
 }
 
 stock start_warmup(bool:resetData)
@@ -535,7 +1023,7 @@ stock start_warmup(bool:resetData)
     }
     if (resetData) close_active_lifecycle("warmup_match_stop")
     cancel_transition_tasks()
-    if (resetData) { reset_match_data(true); g_KnifeDecisionMade = false; }
+    if (resetData) { reset_match_data(true); g_KnifeDecisionMade = false; g_PugActive = false; }
     reset_ready_players()
     load_runtime_settings(false)
     snapshot_environment(); apply_environment(false); set_cw_state(STATE_WARMUP)
@@ -570,7 +1058,7 @@ stock start_live_match(bool:preserveSides)
         announce("Match could not start: configuration or map validation failed.")
         return
     }
-    new bool:restarting = g_State == STATE_LIVE || g_State == STATE_HALFTIME
+    new bool:restarting = g_State == STATE_LIVE || g_State == STATE_HALFTIME || g_State == STATE_OVERTIME_VOTE
     if (restarting) close_active_lifecycle("restart_match_stop")
     cancel_transition_tasks()
     load_runtime_settings(false)
@@ -598,7 +1086,7 @@ stock begin_lo3(bool:resetRoundTracking)
 
 stock close_active_lifecycle(const statsEvent[])
 {
-    if (g_State != STATE_LIVE && g_State != STATE_HALFTIME) return
+    if (g_State != STATE_LIVE && g_State != STATE_HALFTIME && g_State != STATE_OVERTIME_VOTE) return
     emit_match_event("match_stop")
     write_stats_event(statsEvent)
     stop_client_demos()
@@ -607,7 +1095,8 @@ stock close_active_lifecycle(const statsEvent[])
 stock stop_match(bool:administrator)
 {
     cancel_transition_tasks()
-    if (g_State == STATE_LIVE || g_State == STATE_HALFTIME)
+    g_PugActive = false
+    if (g_State == STATE_LIVE || g_State == STATE_HALFTIME || g_State == STATE_OVERTIME_VOTE)
     {
         emit_match_event("match_stop")
         write_stats_event(administrator ? "admin_match_stop" : "match_stop")
@@ -753,7 +1242,12 @@ stock complete_regulation_map(bool:halfAlreadyEnded = false)
         write_stats_event("half_end")
     }
     if (g_MapCount == 2 && g_MapNumber == 1) { begin_map_transition(); return; }
-    if (total_score_a() == total_score_b() && get_pcvar_num(g_CvarOvertime)) { start_overtime_cycle(); return; }
+    if (total_score_a() == total_score_b() && get_pcvar_num(g_CvarOvertime))
+    {
+        if (get_pcvar_num(g_CvarOvertimeVote)) begin_overtime_vote()
+        else start_overtime_cycle()
+        return
+    }
     finish_match(false)
 }
 
@@ -778,6 +1272,60 @@ stock start_overtime_cycle()
     emit_match_event("overtime_start"); write_stats_event("overtime_start")
     announce("Starting overtime %d (MR%d, $%d).", g_OvertimeCycle, clamp(get_pcvar_num(g_CvarOvertimeHalfRounds), 1, 20), clamp(get_pcvar_num(g_CvarOvertimeMoney), 800, 16000))
     set_task(float(clamp(get_pcvar_num(g_CvarHalftimeDelay), 1, 30)), "task_begin_next_half", TASK_HALFTIME)
+}
+
+stock begin_overtime_vote()
+{
+    set_cw_state(STATE_OVERTIME_VOTE)
+    g_OvertimeYesVotes = 0; g_OvertimeNoVotes = 0
+    for (new id = 1; id <= MAX_PLAYERS; id++)
+    {
+        g_OvertimeVoted[id] = false
+        g_OvertimeVoteChoice[id] = 0
+        if (!is_user_connected(id) || is_user_bot(id) || is_user_hltv(id) || identity_for_side(cs_get_user_team(id)) < 0) continue
+        show_overtime_vote_menu(id)
+    }
+    announce("Regulation is tied. Players are voting whether to play overtime.")
+    if (!overtime_eligible_count())
+    {
+        finish_overtime_vote()
+        return
+    }
+    remove_task(TASK_OVERTIME_VOTE)
+    set_task(float(clamp(get_pcvar_num(g_CvarOvertimeVoteSeconds), 5, 30)), "task_finish_overtime_vote", TASK_OVERTIME_VOTE)
+}
+
+stock show_overtime_vote_menu(id)
+{
+    new title[96], label[64]
+    refresh_branding(false); formatex(title, charsmax(title), "%s: %L", g_DisplayName, id, "CW_OVERTIME_TITLE")
+    new menu = menu_create(title, "menu_overtime_vote_handler")
+    ml_text(id, "CW_OVERTIME_YES", label, charsmax(label)); menu_additem(menu, label, "1")
+    ml_text(id, "CW_OVERTIME_NO", label, charsmax(label)); menu_additem(menu, label, "2")
+    menu_setprop(menu, MPROP_EXIT, MEXIT_NEVER); menu_display(id, menu)
+}
+
+stock finish_overtime_vote()
+{
+    if (g_State != STATE_OVERTIME_VOTE) return
+    remove_task(TASK_OVERTIME_VOTE)
+    new bool:playOvertime
+    if (g_OvertimeYesVotes == g_OvertimeNoVotes) playOvertime = bool:get_pcvar_num(g_CvarOvertimeVoteDefault)
+    else playOvertime = g_OvertimeYesVotes > g_OvertimeNoVotes
+    announce("Overtime vote: %d play, %d draw. Decision: %s.", g_OvertimeYesVotes, g_OvertimeNoVotes, playOvertime ? "play overtime" : "end as draw")
+    audit_event(playOvertime ? "overtime_vote_play" : "overtime_vote_draw")
+    if (playOvertime) start_overtime_cycle()
+    else finish_match(false)
+}
+
+stock overtime_vote_count() { return g_OvertimeYesVotes + g_OvertimeNoVotes; }
+
+stock overtime_eligible_count()
+{
+    new players[32], count, eligible
+    get_players(players, count, "ch")
+    for (new i = 0; i < count; i++) if (identity_for_side(cs_get_user_team(players[i])) >= 0) eligible++
+    return eligible
 }
 
 stock evaluate_overtime_progress()
@@ -808,6 +1356,7 @@ stock begin_map_transition()
 stock finish_match(bool:stopped)
 {
     cancel_transition_tasks(); set_cw_state(STATE_FINISHED)
+    g_PugActive = false
     emit_match_event(stopped ? "match_stop" : "match_end"); write_stats_event(stopped ? "match_stop" : "match_end")
     take_client_screenshots(); stop_client_demos()
     new labelA[MAX_TEAM_LABEL + 1], labelB[MAX_TEAM_LABEL + 1]
@@ -1288,6 +1837,7 @@ stock reset_match_data(bool:resetSides)
     g_TeamAScore = 0; g_TeamBScore = 0; g_PreviousMapScoreA = 0; g_PreviousMapScoreB = 0
     g_HalfStartA = 0; g_HalfStartB = 0; g_Half = 1; g_RoundsThisHalf = 0
     g_OvertimeCycle = 0; g_InOvertime = false; g_RoundResolved = false; g_Lo3Running = false; g_MapNumber = 1
+    g_OvertimeYesVotes = 0; g_OvertimeNoVotes = 0
     if (resetSides) g_TeamASide = CS_TEAM_CT
 }
 
@@ -1300,7 +1850,7 @@ stock reset_ready_players()
 stock cancel_transition_tasks()
 {
     cancel_lo3_tasks(); remove_task(TASK_HALFTIME); remove_task(TASK_WARMUP)
-    remove_task(TASK_KNIFE_VOTE); remove_task(TASK_TIME_LIMIT); remove_task(TASK_MAP_CHANGE)
+    remove_task(TASK_KNIFE_VOTE); remove_task(TASK_OVERTIME_VOTE); remove_task(TASK_TIME_LIMIT); remove_task(TASK_MAP_CHANGE)
     for (new id = 1; id <= MAX_PLAYERS; id++) remove_task(TASK_KNIFE_EQUIP + id)
 }
 
@@ -1336,6 +1886,7 @@ stock state_name(output[], length)
         case STATE_KNIFE_VOTE: copy(output, length, "knife_vote")
         case STATE_LIVE: copy(output, length, "live")
         case STATE_HALFTIME: copy(output, length, "halftime")
+        case STATE_OVERTIME_VOTE: copy(output, length, "overtime_vote")
         case STATE_FINISHED: copy(output, length, "finished")
         default: copy(output, length, "off")
     }

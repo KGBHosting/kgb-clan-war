@@ -5,7 +5,7 @@
 #include <sockets>
 
 #define PLUGIN_NAME "KGB Clan War: HLTV"
-#define PLUGIN_VERSION "0.2.0"
+#define PLUGIN_VERSION "0.3.0"
 #define PLUGIN_AUTHOR "KGB Hosting"
 
 #define TASK_HLTV_START 88401
@@ -25,6 +25,7 @@ new g_CvarFilePrefix
 new g_CvarRconEnabled
 new g_CvarRconHost
 new g_CvarRconPort
+new g_CvarProxyDelay
 
 new bool:g_Recording
 new g_RecordFile[96]
@@ -50,6 +51,12 @@ public plugin_init()
     g_CvarRconEnabled = register_cvar("kgb_cw_hltv_rcon_enabled", "0")
     g_CvarRconHost = register_cvar("kgb_cw_hltv_rcon_host", "127.0.0.1")
     g_CvarRconPort = register_cvar("kgb_cw_hltv_rcon_port", "27020")
+    g_CvarProxyDelay = register_cvar("kgb_cw_hltv_proxy_delay", "30")
+
+    register_concmd("amx_cw_hltv_menu", "command_hltv_menu", ADMIN_CFG, "- interactive HLTV controls")
+    register_concmd("amx_cw_hltv_status", "command_hltv_status", ADMIN_CFG, "- show HLTV integration status")
+    register_concmd("amx_cw_hltv_test", "command_hltv_test", ADMIN_CFG, "- send a harmless proxy echo test")
+    register_concmd("amx_cw_hltv_delay", "command_hltv_delay", ADMIN_CFG, "<0-3600 seconds>")
 }
 
 public plugin_cfg()
@@ -63,6 +70,119 @@ public plugin_end()
     remove_task(TASK_HLTV_STOP)
     close_rcon_socket()
     clear_rcon_command()
+}
+
+public command_hltv_menu(id, level, cid)
+{
+    if (!cmd_access(id, level, cid, 1)) return PLUGIN_HANDLED
+    new title[96]
+    formatex(title, charsmax(title), "KGB Clan War HLTV (delay %ds)", clamp(get_pcvar_num(g_CvarProxyDelay), 0, 3600))
+    new menu = menu_create(title, "menu_hltv_handler")
+    menu_additem(menu, get_pcvar_num(g_CvarEnabled) ? "Disable integration" : "Enable integration", "1")
+    menu_additem(menu, get_pcvar_num(g_CvarAutoRecord) ? "Disable automatic recording" : "Enable automatic recording", "2")
+    menu_additem(menu, "Set proxy delay: 0 seconds", "3")
+    menu_additem(menu, "Set proxy delay: 30 seconds", "4")
+    menu_additem(menu, "Set proxy delay: 90 seconds", "5")
+    menu_additem(menu, "Test proxy command path", "6")
+    menu_additem(menu, "Show status", "7")
+    menu_setprop(menu, MPROP_EXIT, MEXIT_ALL); menu_display(id, menu)
+    return PLUGIN_HANDLED
+}
+
+public menu_hltv_handler(id, menu, item)
+{
+    if (item == MENU_EXIT || !(get_user_flags(id) & ADMIN_CFG))
+    {
+        menu_destroy(menu)
+        return PLUGIN_HANDLED
+    }
+    new access, info[8], label[64], callback
+    menu_item_getinfo(menu, item, access, info, charsmax(info), label, charsmax(label), callback)
+    switch (str_to_num(info))
+    {
+        case 1: { set_pcvar_num(g_CvarEnabled, !get_pcvar_num(g_CvarEnabled)); hltv_console(id, "Integration is now %s.", get_pcvar_num(g_CvarEnabled) ? "enabled" : "disabled"); }
+        case 2: { set_pcvar_num(g_CvarAutoRecord, !get_pcvar_num(g_CvarAutoRecord)); hltv_console(id, "Automatic recording is now %s.", get_pcvar_num(g_CvarAutoRecord) ? "enabled" : "disabled"); }
+        case 3: apply_proxy_delay(id, 0)
+        case 4: apply_proxy_delay(id, 30)
+        case 5: apply_proxy_delay(id, 90)
+        case 6: test_hltv_command_path(id)
+        case 7: show_hltv_status(id)
+    }
+    menu_destroy(menu)
+    return PLUGIN_HANDLED
+}
+
+public command_hltv_status(id, level, cid)
+{
+    if (cmd_access(id, level, cid, 1)) show_hltv_status(id)
+    return PLUGIN_HANDLED
+}
+
+public command_hltv_test(id, level, cid)
+{
+    if (cmd_access(id, level, cid, 1)) test_hltv_command_path(id)
+    return PLUGIN_HANDLED
+}
+
+public command_hltv_delay(id, level, cid)
+{
+    if (!cmd_access(id, level, cid, 2)) return PLUGIN_HANDLED
+    new value[16]
+    read_argv(1, value, charsmax(value))
+    if (!is_decimal_number(value)) hltv_console(id, "Delay must be an integer from 0 through 3600 seconds.")
+    else apply_proxy_delay(id, clamp(str_to_num(value), 0, 3600))
+    return PLUGIN_HANDLED
+}
+
+stock show_hltv_status(id)
+{
+    new hltv = find_connected_hltv()
+    hltv_console(id, "enabled=%d auto_record=%d recording=%d connected_proxy=%d rcon=%d delay=%d file=%s", get_pcvar_num(g_CvarEnabled), get_pcvar_num(g_CvarAutoRecord), g_Recording, hltv > 0, get_pcvar_num(g_CvarRconEnabled), clamp(get_pcvar_num(g_CvarProxyDelay), 0, 3600), g_RecordFile[0] ? g_RecordFile : "none")
+}
+
+stock test_hltv_command_path(id)
+{
+    if (dispatch_proxy_command("echo kgb_cw_hltv_test")) hltv_console(id, "Harmless test command queued. Confirm receipt in the HLTV console/log.")
+    else hltv_console(id, "No connected proxy or explicitly enabled RCON path is available.")
+}
+
+stock apply_proxy_delay(id, seconds)
+{
+    seconds = clamp(seconds, 0, 3600)
+    new command[32]
+    formatex(command, charsmax(command), "delay %d", seconds)
+    if (!dispatch_proxy_command(command))
+    {
+        hltv_console(id, "Delay was not changed because no proxy command path is available.")
+        return
+    }
+    set_pcvar_num(g_CvarProxyDelay, seconds)
+    hltv_console(id, "Proxy delay command queued: %d seconds.", seconds)
+}
+
+stock bool:dispatch_proxy_command(const command[])
+{
+    new hltv = find_connected_hltv()
+    if (hltv > 0)
+    {
+        client_cmd(hltv, "%s", command)
+        return true
+    }
+    return begin_rcon_command(command)
+}
+
+stock bool:is_decimal_number(const value[])
+{
+    if (!value[0]) return false
+    for (new i = 0; value[i]; i++) if (value[i] < '0' || value[i] > '9') return false
+    return true
+}
+
+stock hltv_console(id, const format[], any:...)
+{
+    new message[191]
+    vformat(message, charsmax(message), format, 3)
+    console_print(id, "[KGB CW HLTV] %s", message)
 }
 
 /**

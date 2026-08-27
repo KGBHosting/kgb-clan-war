@@ -10,22 +10,28 @@ credentials nor a database.
 
 ## Release policy
 
-`v0.2.0` is the next qualification candidate. It is not a release until the
+`v0.3.0` is the next qualification candidate. It is not a release until the
 tagged release workflow completes. The earlier stable-version candidate was
 withdrawn when configurable operator branding was added; do not deploy that
-candidate. Promote `v0.2.0` only after its CI and development-server
+candidate. Promote `v0.3.0` only after its CI and development-server
 qualification evidence is complete.
 
 The qualification line includes the practical AMX Match Deluxe feature
 set: player/team/admin ready modes; max-round, win-limit, and time-limit
 formats; playout; knife stay/swap voting; team names and tags; one- or two-map
-matches; phase configs; match/half restart; PUG team randomization; optional
+matches; phase configs; operator-managed league presets and default-map menus;
+an allowlisted saved menu snapshot; English/German message catalogs; an
+optional overtime play/draw vote; match score plus admin-only SteamID reports;
+interactive HLTV status/test/delay controls; match/half restart; random or
+admin-drafted PUG teams; optional
 hostname/password and client demo/screenshot actions; file statistics; optional
 HLTV recording; and optional SQLX persistence.
 
 “Deluxe feature set” describes supported operator workflows, not shared code or
 binary compatibility. KGB Clan War does not contain AMX Match Deluxe source,
-release binaries, language files, or league presets.
+release binaries, language files, or league presets. The shipped presets and
+translations are new clean-room material and do not claim conformance with
+CAL, ESL, or another league's rules.
 
 ## Components
 
@@ -41,7 +47,8 @@ the core before them in `plugins.ini`.
 ## Safe defaults and limitations
 
 - SQL, UDP RCON, server hostname/password changes, shield changes, client demo
-  commands, screenshots, and PUG randomization are disabled by default.
+  commands, screenshots, saved menu configuration, overtime voting, and PUG
+  behavior are disabled by default.
 - The release never contains an RCON password or database credential. HLTV
   RCON reads its password from an operator-created
   `addons/amxmodx/configs/kgb_clan_war_hltv_rcon.key`. SQLX reads the normal
@@ -55,6 +62,8 @@ the core before them in `plugins.ini`.
   MetaMod, AMX Mod X modules, maps, SQL driver, and HLTV topology.
 
 See [SECURITY.md](SECURITY.md) before enabling an external integration.
+The clean-room comparison and deliberate non-equivalence boundaries are in
+[`docs/deluxe-parity.md`](docs/deluxe-parity.md).
 
 ## Install
 
@@ -110,11 +119,19 @@ access flag.
 | `amx_cw_restart_half` | Reset the current half. |
 | `amx_cw_restart_match` | Reset the complete match. |
 | `amx_cw_pug_randomize` | Randomize warmup players when PUG mode is enabled. |
+| `amx_cw_pug_start [random\|manual]` | Start a PUG warmup using the selected team workflow. |
+| `amx_cw_pug_assign <player> <a\|b>` | Assign a player during a manual PUG draft. |
+| `amx_cw_pug_stop` | Stop the active PUG and restore managed server state. |
+| `amx_cw_config_menu` | Open preset, default-map, and saved-snapshot controls. |
+| `amx_cw_presets`, `amx_cw_preset <name>` | Browse or apply an installed clean-room league preset. |
+| `amx_cw_map_menu` | Select one or two installed maps from the operator catalog. |
+| `amx_cw_save_config`, `amx_cw_load_saved` | Save/load the non-secret allowlisted menu snapshot. |
 | `amx_cw_teams <team-a> <team-b>` | Set team display names. Quote names containing spaces. |
 | `amx_cw_tags <tag-a> <tag-b>` | Set clan tags. |
 | `amx_cw_maps <map1> [map2]` | Select one or two installed maps. |
 | `amx_cw_stop` | Stop the match and restore the captured server environment. |
 | `amx_cw_score` | Show the public match score. |
+| `amx_cw_scoreids` | Print detailed score and player SteamIDs to an authorized admin's console only. |
 | `amx_cw_status` | Show detailed match status. |
 
 Player chat shortcuts are `/ready`, `/notready`, `/teamready`,
@@ -142,6 +159,9 @@ The installer creates
 | `kgb_cw_overtime_max_cycles` | `3` | Bound repeated overtime cycles; `0` explicitly means unlimited. |
 | `kgb_cw_overtime_half_rounds` | `3` | Overtime rounds per half. |
 | `kgb_cw_overtime_money` | `10000` | Overtime start money, clamped by the plugin. |
+| `kgb_cw_overtime_vote` | `0` | Ask active players whether to play overtime or accept a draw. |
+| `kgb_cw_overtime_vote_seconds` | `15` | Overtime vote duration, clamped to 5-30 seconds. |
+| `kgb_cw_overtime_vote_default` | `1` | Tied/no-vote decision: `1` plays overtime, `0` accepts the draw. |
 | `kgb_cw_team_a_name`, `kgb_cw_team_b_name` | `Team A`, `Team B` | Team display names. |
 | `kgb_cw_team_a_tag`, `kgb_cw_team_b_tag` | empty | Optional clan tags. |
 | `kgb_cw_map1`, `kgb_cw_map2` | empty | Installed map basenames. |
@@ -154,6 +174,8 @@ The installer creates
 | `kgb_cw_knife_vote` | `1` | Let the knife winner vote to stay or swap. |
 | `kgb_cw_knife_vote_seconds` | `15` | Knife decision timeout. |
 | `kgb_cw_pug_mode` | `0` | Permit PUG randomization. |
+| `kgb_cw_pug_style` | `random` | Default `random` or admin-managed `manual` team workflow. |
+| `kgb_cw_allow_menu_save` | `0` | Permit writing the allowlisted, non-secret saved snapshot. |
 | `kgb_cw_set_hostname` | `0` | Opt in to temporary hostname changes. |
 | `kgb_cw_hostname` | empty | Temporary match hostname. |
 | `kgb_cw_set_password` | `0` | Opt in to temporary `sv_password`. |
@@ -200,6 +222,22 @@ Steam authentication IDs, current names, team, kills, deaths, and headshots.
 Operators are responsible for an appropriate notice, lawful basis, access
 control, retention period, and deletion process for that personal data.
 
+The core loads `addons/amxmodx/data/lang/kgb_clan_war.txt`. The repository
+ships English and German menu/vote translations; operators can extend the
+AMX Mod X dictionary without recompiling. Preset and map catalogs are
+operator-owned after first install. Catalog tokens are strictly validated,
+presets can only execute below the managed preset directory, and maps must be
+installed before they appear in the menu. The save workflow deliberately
+excludes `kgb_cw_password`, hostname changes, SQL settings, and HLTV RCON
+credentials.
+
+HLTV administrators can use `amx_cw_hltv_menu`, `amx_cw_hltv_status`,
+`amx_cw_hltv_test`, and `amx_cw_hltv_delay <0-3600>`. A delay/test action is
+sent only to a connected proxy or the explicitly enabled UDP RCON path. The
+test queues a harmless `echo`; the operator must confirm its receipt in the
+HLTV console/log. Credentials remain file-only and cannot be entered through
+the menu or a CVAR.
+
 ## Build and compatibility
 
 Docker is required. The build uses a digest-pinned 32-bit Debian container,
@@ -213,7 +251,7 @@ first four bytes are not the AMXX `XXMA` magic used by the Panel artifact gate.
 ./scripts/check-source-capabilities.sh
 ./scripts/check-compatibility.sh
 ./scripts/test-install.sh
-./scripts/package.sh v0.2.0
+./scripts/package.sh v0.3.0
 ```
 
 Compatibility checks compile all three plugins against AMX Mod X `1.8.2`,
@@ -229,7 +267,7 @@ checksum verification before creating a release.
 - `kgb_clan_war.amxx` and `kgb_clan_war.amxx.sha256`
 - `kgb_clan_war_hltv.amxx` and `kgb_clan_war_hltv.amxx.sha256`
 - `kgb_clan_war_sql.amxx` and `kgb_clan_war_sql.amxx.sha256`
-- `kgb-clan-war-v0.2.0.zip` and `kgb-clan-war-v0.2.0.zip.sha256`
+- `kgb-clan-war-v0.3.0.zip` and `kgb-clan-war-v0.3.0.zip.sha256`
 
 The ZIP is the convenience distribution: binaries, checksums, safe config
 examples, corresponding source, build/install scripts, license, and security

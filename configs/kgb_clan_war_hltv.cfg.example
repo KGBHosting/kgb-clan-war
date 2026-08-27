@@ -5,6 +5,7 @@ kgb_cw_hltv_enabled 0
 kgb_cw_hltv_auto_record 1
 kgb_cw_hltv_start_delay 3.0
 kgb_cw_hltv_stop_delay 5.0
+kgb_cw_hltv_proxy_delay 30
 kgb_cw_hltv_file_prefix "kgb_cw"
 kgb_cw_hltv_rcon_enabled 0
 kgb_cw_hltv_rcon_host "127.0.0.1"

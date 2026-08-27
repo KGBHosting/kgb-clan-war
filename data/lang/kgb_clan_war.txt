@@ -1,0 +1,47 @@
+[en]
+CW_MENU_WARMUP = Start warmup
+CW_MENU_KNIFE = Start knife round
+CW_MENU_LIVE = Start match (LO3)
+CW_MENU_RELO3 = Repeat LO3
+CW_MENU_STATUS = Show detailed status
+CW_MENU_SWAP = Swap teams
+CW_MENU_PUG = Randomize PUG teams
+CW_MENU_CONFIG = Presets, maps and saved config
+CW_MENU_STOP = Stop and restore
+CW_CONFIG_TITLE = configuration
+CW_CONFIG_PRESET = Select league preset
+CW_CONFIG_MAPS = Select default maps
+CW_CONFIG_SAVE = Save allowlisted snapshot
+CW_CONFIG_LOAD = Load saved snapshot
+CW_PRESET_TITLE = league presets
+CW_MAP_FIRST_TITLE = select map 1
+CW_MAP_SECOND_TITLE = select optional map 2
+CW_MAP_SINGLE = Use map 1 only
+CW_OVERTIME_TITLE = play overtime?
+CW_OVERTIME_YES = Play overtime
+CW_OVERTIME_NO = Accept draw
+CW_VOTE_RECORDED = Vote recorded.
+
+[de]
+CW_MENU_WARMUP = Aufwaermphase starten
+CW_MENU_KNIFE = Messerrunde starten
+CW_MENU_LIVE = Match starten (LO3)
+CW_MENU_RELO3 = LO3 wiederholen
+CW_MENU_STATUS = Detaillierten Status anzeigen
+CW_MENU_SWAP = Teams tauschen
+CW_MENU_PUG = PUG-Teams zufaellig einteilen
+CW_MENU_CONFIG = Presets, Maps und gespeicherte Config
+CW_MENU_STOP = Stoppen und wiederherstellen
+CW_CONFIG_TITLE = Konfiguration
+CW_CONFIG_PRESET = Liga-Preset auswaehlen
+CW_CONFIG_MAPS = Standard-Maps auswaehlen
+CW_CONFIG_SAVE = Freigegebenen Snapshot speichern
+CW_CONFIG_LOAD = Gespeicherten Snapshot laden
+CW_PRESET_TITLE = Liga-Presets
+CW_MAP_FIRST_TITLE = Map 1 auswaehlen
+CW_MAP_SECOND_TITLE = Optionale Map 2 auswaehlen
+CW_MAP_SINGLE = Nur Map 1 verwenden
+CW_OVERTIME_TITLE = Verlaengerung spielen?
+CW_OVERTIME_YES = Verlaengerung spielen
+CW_OVERTIME_NO = Unentschieden akzeptieren
+CW_VOTE_RECORDED = Stimme gespeichert.

@@ -20,6 +20,11 @@ kgb_cw_overtime 1
 kgb_cw_overtime_max_cycles 3
 kgb_cw_overtime_half_rounds 3
 kgb_cw_overtime_money 10000
+; When enabled, connected players vote to play overtime or accept the draw.
+; A tied/no-vote result uses kgb_cw_overtime_vote_default.
+kgb_cw_overtime_vote 0
+kgb_cw_overtime_vote_seconds 15
+kgb_cw_overtime_vote_default 1
 kgb_cw_hud_announcements 1
 
 ; Team and series metadata.
@@ -41,6 +46,10 @@ kgb_cw_halftime_delay 5
 kgb_cw_knife_vote 1
 kgb_cw_knife_vote_seconds 15
 kgb_cw_pug_mode 0
+kgb_cw_pug_style "random"
+; Allows the admin menu to write only a non-secret, allowlisted snapshot to
+; addons/amxmodx/configs/kgb_clan_war_saved.cfg.
+kgb_cw_allow_menu_save 0
 
 ; Risky, access-changing, or client-affecting features are opt-in.
 kgb_cw_set_hostname 0
