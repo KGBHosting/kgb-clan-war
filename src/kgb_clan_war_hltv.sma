@@ -46,6 +46,7 @@ new bool:g_RconCredentialWarningShown
 new bool:g_StopPathWarningShown
 new RconOperation:g_RconOperation = RCON_NONE
 new bool:g_RecordStartPending, bool:g_RecordStopPending
+new bool:g_RecordRestartPending
 
 public plugin_init()
 {
@@ -83,9 +84,10 @@ public plugin_end()
     remove_task(TASK_HLTV_START)
     remove_task(TASK_HLTV_STOP)
     remove_task(TASK_CONFIG_MONITOR)
+    stop_recording_on_unload()
     close_rcon_socket()
     clear_rcon_request_state()
-    g_RecordStartPending = false; g_RecordStopPending = false
+    g_RecordStartPending = false; g_RecordStopPending = false; g_RecordRestartPending = false
 }
 
 public command_hltv_menu(id, level, cid)
@@ -242,10 +244,11 @@ public kgb_cw_event(const event[], const team_a[], const team_b[], map_number, h
 {
     if (equali(event, "map_change"))
     {
-        remove_task(TASK_HLTV_START); remove_task(TASK_HLTV_STOP); task_stop_recording(); return
+        g_RecordRestartPending = false; remove_task(TASK_HLTV_START); remove_task(TASK_HLTV_STOP); task_stop_recording(); return
     }
     if (equali(event, "match_end") || equali(event, "match_stop"))
     {
+        g_RecordRestartPending = false
         remove_task(TASK_HLTV_START); remove_task(TASK_HLTV_STOP)
         set_task(clamp_delay(get_pcvar_float(g_CvarStopDelay)), "task_stop_recording", TASK_HLTV_STOP)
         return
@@ -261,9 +264,13 @@ public kgb_cw_event(const event[], const team_a[], const team_b[], map_number, h
         copy(g_TeamB, charsmax(g_TeamB), team_b)
         g_MapNumber = map_number
 
-        remove_task(TASK_HLTV_STOP)
-        remove_task(TASK_HLTV_START)
-        set_task(clamp_delay(get_pcvar_float(g_CvarStartDelay)), "task_start_recording", TASK_HLTV_START)
+        remove_task(TASK_HLTV_STOP); remove_task(TASK_HLTV_START)
+        if (g_Recording || g_RecordStartPending || g_RecordStopPending || g_RconOperation != RCON_NONE)
+        {
+            g_RecordRestartPending = true
+            drive_recording_restart()
+        }
+        else schedule_recording_start()
     }
     else if (equali(event, "half_start") && map_number == 2 && half == 1 && !g_Recording)
     {
@@ -272,13 +279,50 @@ public kgb_cw_event(const event[], const team_a[], const team_b[], map_number, h
         copy(g_TeamB, charsmax(g_TeamB), team_b)
         g_MapNumber = map_number
 
-        remove_task(TASK_HLTV_STOP)
-        remove_task(TASK_HLTV_START)
-        set_task(clamp_delay(get_pcvar_float(g_CvarStartDelay)), "task_start_recording", TASK_HLTV_START)
+        remove_task(TASK_HLTV_STOP); remove_task(TASK_HLTV_START)
+        schedule_recording_start()
     }
 }
 
-public task_monitor_configuration() { enforce_disabled_recording_stop(); }
+public task_monitor_configuration()
+{
+    enforce_disabled_recording_stop()
+    drive_recording_restart()
+}
+
+stock schedule_recording_start()
+{
+    if (!get_pcvar_num(g_CvarEnabled) || !get_pcvar_num(g_CvarAutoRecord))
+    {
+        g_RecordRestartPending = false
+        return
+    }
+    remove_task(TASK_HLTV_START)
+    set_task(clamp_delay(get_pcvar_float(g_CvarStartDelay)), "task_start_recording", TASK_HLTV_START)
+}
+
+stock drive_recording_restart()
+{
+    if (!g_RecordRestartPending) return
+    if (!get_pcvar_num(g_CvarEnabled) || !get_pcvar_num(g_CvarAutoRecord))
+    {
+        g_RecordRestartPending = false
+        return
+    }
+    if (g_RecordStartPending)
+    {
+        finish_rcon_request(false)
+        return
+    }
+    if (g_RecordStopPending || g_RconOperation != RCON_NONE) return
+    if (g_Recording)
+    {
+        task_stop_recording()
+        return
+    }
+    g_RecordRestartPending = false
+    schedule_recording_start()
+}
 
 stock enforce_disabled_recording_stop()
 {
@@ -335,6 +379,7 @@ public task_stop_recording()
         finish_rcon_request(false)
         g_RecordFile[0] = 0
         server_print("[KGB CW HLTV] Pending start request was cancelled before authentication.")
+        drive_recording_restart()
         return
     }
     if (!g_Recording || g_RecordStopPending)
@@ -349,6 +394,7 @@ public task_stop_recording()
         server_print("[KGB CW HLTV] Stop recording requested from the connected HLTV proxy.")
         g_Recording = false; g_RecordFile[0] = 0
         g_StopPathWarningShown = false
+        drive_recording_restart()
     }
     else if (get_pcvar_num(g_CvarRconEnabled))
     {
@@ -357,6 +403,7 @@ public task_stop_recording()
             g_RecordStopPending = true
             server_print("[KGB CW HLTV] Stop request is pending an HLTV RCON challenge.")
         }
+        else g_RecordRestartPending = false
     }
     else
     {
@@ -365,6 +412,7 @@ public task_stop_recording()
             server_print("[KGB CW HLTV] The recorded proxy is no longer connected; recording remains active/unknown because no stop command path exists.")
             g_StopPathWarningShown = true
         }
+        g_RecordRestartPending = false
     }
 
 }
@@ -577,8 +625,77 @@ stock finish_rcon_request(bool:success)
             g_StopPathWarningShown = false
             server_print("[KGB CW HLTV] Stop request was authenticated and sent.")
         }
-        else server_print("[KGB CW HLTV] Stop request failed; recording state remains active/unknown.")
+        else
+        {
+            g_RecordRestartPending = false
+            server_print("[KGB CW HLTV] Stop request failed; recording state remains active/unknown and a replacement recording will not start.")
+        }
     }
+    drive_recording_restart()
+}
+
+stock stop_recording_on_unload()
+{
+    if (!g_Recording && !g_RecordStartPending && !g_RecordStopPending) return
+
+    new hltv = find_connected_hltv()
+    if (hltv > 0)
+    {
+        client_cmd(hltv, "stoprecording")
+        server_print("[KGB CW HLTV] Stop recording requested from the connected proxy during plugin unload.")
+        return
+    }
+
+    /* A pending start that never authenticated cannot have begun recording. */
+    if (g_RecordStartPending)
+    {
+        server_print("[KGB CW HLTV] Cancelled an unauthenticated start request during plugin unload.")
+        return
+    }
+    if (!get_pcvar_num(g_CvarRconEnabled))
+    {
+        server_print("[KGB CW HLTV] Plugin unloaded while recording remained active/unknown and no stop command path existed.")
+        return
+    }
+
+    close_rcon_socket(); clear_rcon_request_state()
+    if (!begin_rcon_command("stoprecording", RCON_STOP_RECORDING))
+    {
+        server_print("[KGB CW HLTV] Could not begin the bounded unload stop request; recording remains active/unknown.")
+        return
+    }
+    remove_task(TASK_RCON_POLL)
+
+    /* Unload cannot leave asynchronous work behind. Bound this one challenge
+     * exchange to 100 ms, then fail closed without claiming that recording
+     * stopped when the proxy did not answer. */
+#if defined SOCK_NON_BLOCKING
+    if (!socket_is_readable(g_RconSocket, 100000))
+#else
+    if (!socket_change(g_RconSocket, 100000))
+#endif
+    {
+        server_print("[KGB CW HLTV] Timed out waiting for the unload stop challenge; recording remains active/unknown.")
+        return
+    }
+    new response[RCON_PACKET_MAX + 1]
+    new received = socket_recv(g_RconSocket, response, RCON_PACKET_MAX)
+    if (received <= 0)
+    {
+        server_print("[KGB CW HLTV] Could not read the unload stop challenge; recording remains active/unknown.")
+        return
+    }
+    if (received > RCON_PACKET_MAX) received = RCON_PACKET_MAX
+    response[received] = 0
+    new challenge[32]
+    if (!extract_rcon_challenge(response, challenge, charsmax(challenge)) || !send_authenticated_rcon(challenge))
+    {
+        server_print("[KGB CW HLTV] Could not authenticate the unload stop request; recording remains active/unknown.")
+        arrayset(response, 0, sizeof response); arrayset(challenge, 0, sizeof challenge)
+        return
+    }
+    server_print("[KGB CW HLTV] Authenticated stop recording request sent during plugin unload.")
+    arrayset(response, 0, sizeof response); arrayset(challenge, 0, sizeof challenge)
 }
 
 stock bool:read_rcon_password(password[], passwordLength)

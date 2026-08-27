@@ -4,7 +4,8 @@ This project is an independent GPL implementation. The legacy customer archive
 was used only as black-box evidence of operator-visible filenames, configuration
 knobs, menu/message labels, and workflows. Its `amx_match_deluxe.amxx` binary was
 not decompiled, linked, copied, or redistributed. Its language and league files
-were not copied.
+were not copied. The public behavior reference is the
+[AMX Match Deluxe thread](https://forums.alliedmods.net/showthread.php?t=5231).
 
 ## v0.3.0 clean-room coverage
 
@@ -12,17 +13,18 @@ were not copied.
 | --- | --- |
 | League/config selection | Strict catalog plus managed preset directory; fresh generic MR15, MR12, and PUG examples. |
 | Default map selection | Operator-owned map catalog; menu selects one or two maps and hides maps not installed on the server. |
-| Saved menu setup | Opt-in snapshot containing an explicit non-secret CVAR allowlist plus an interactive settings wizard; password, hostname, SQL, and RCON values are excluded. |
+| Saved menu setup | Opt-in snapshot containing an explicit non-secret CVAR allowlist plus an interactive settings wizard. Presets/snapshots are fully prevalidated before mutation; snapshots use validated temporary files and atomic rename. Password, hostname, SQL, and RCON values are excluded. |
 | Multilingual UI | Fresh AMX Mod X dictionary with English and German customer-visible controls, match lifecycle, votes, HUD, score/identity, and HLTV UI; operators can extend it. |
-| Overtime play-out choice | Optional active-player play-overtime/accept-draw vote with bounded duration and an explicit tie/no-vote default. |
+| Overtime and regulation play-out choices | Optional active-player play-overtime/accept-draw vote plus clinch/always/player-vote regulation playout, both with explicit tie/no-vote defaults. |
+| Time-limit halves | Each half timer starts after LO3, is reset by an administrator half restart, and by default lets the active round finish before the half transition. |
 | Ready/side policy | Optional second-half re-ready gate and `halves`/`off` automatic swap policy; administrator and knife-vote swaps remain available. |
 | Knife enforcement | The knife phase continuously removes non-knife weapons and blocks weapon-box/armoury pickup until the phase ends. |
-| Legacy launch aliases | One-shot `amx_match` setup and legacy ready/chat aliases route through the validated KGB state machine. |
+| Legacy launch aliases | The documented `amx_match`, `amx_match2`, `amx_match3`, and `amx_match4` one/two-map forms plus lifecycle/team aliases route through the validated KGB state machine. MR, TL, and the later documented WL rule are supported. |
 | Recurring HUD | Configurable recurring ready count or current-map score display. |
-| Legacy score/identity view | Public current-map score, a separately labelled series aggregate, and `ADMIN_CFG`-only SteamID/current-scoreboard reports. An additional opt-in MOTD/screenshot request makes the evidence flow explicit. |
+| Legacy score/identity view | Public current-map score, a separately labelled series aggregate, and `ADMIN_CFG`-only SteamID/current-scoreboard reports. Enabled identity evidence is requested automatically at half/map/match boundaries and optionally on administrator stop. |
 | File statistics | Lifecycle rows plus connected-player per-half deltas and current-scoreboard K-D; fields explicitly avoid implying cumulative identity statistics. |
 | HLTV configuration and delay | Admin menu/commands for enable, auto-record, status, harmless path test, and bounded proxy delay actually sent before `record`. RCON operations are serialized and pending/failure state is conservative. Credentials remain file-only. |
-| Broader PUG operation | Atomic validated start, spectator-safe randomization, admin-managed manual assignments, cross-map session state, and mapcycle rotation after a completed two-map PUG. |
+| Broader PUG operation | Atomic validated start, spectator-safe randomization, admin-managed manual assignments, cross-map session state, and alternation of the configured two-map pair before persistent PUG warmup resumes. This is not claimed as general server mapcycle advancement. |
 
 ## Deliberate non-equivalence
 

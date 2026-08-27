@@ -14,7 +14,14 @@ kgb_cw_format "mr"
 kgb_cw_half_rounds 15
 kgb_cw_win_rounds 16
 kgb_cw_time_limit_minutes 20
+; 0 = end when clinched, 1 = always play all regulation rounds,
+; 2 = ask active players when the result is clinched.
 kgb_cw_playout 0
+; Tied/no-vote playout decision: 1 continues, 0 ends the match.
+kgb_cw_playout_vote_default 1
+; Finish the active round after a time-limit half expires. Set 0 for an
+; immediate half transition.
+kgb_cw_time_limit_finish_round 1
 kgb_cw_overtime 1
 ; Set to 0 only when deliberately allowing unlimited overtime cycles.
 kgb_cw_overtime_max_cycles 3
@@ -70,4 +77,7 @@ kgb_cw_client_demos 0
 kgb_cw_screenshots 0
 ; Explicit admin-only score/SteamID MOTD plus screenshot workflow.
 kgb_cw_scoreid_screenshots 0
+; Apply the configured score and identity screenshot workflows to an
+; administrator-requested match stop as well as normal half/match endings.
+kgb_cw_screenshot_on_stop 0
 kgb_cw_file_stats 1

@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CORE="$ROOT_DIR/src/kgb_clan_war.sma"
 HLTV="$ROOT_DIR/src/kgb_clan_war_hltv.sma"
 SQL="$ROOT_DIR/src/kgb_clan_war_sql.sma"
+SQL_SCHEMA="$ROOT_DIR/sql/schema.sql"
 CORE_CONFIG="$ROOT_DIR/configs/kgb_clan_war.cfg.example"
 PRESET_CATALOG="$ROOT_DIR/configs/kgb_clan_war_presets.ini.example"
 MAP_CATALOG="$ROOT_DIR/configs/kgb_clan_war_maps.ini.example"
@@ -33,7 +34,8 @@ for command in \
 	amx_cw_menu amx_cw_warmup amx_cw_knife amx_cw_live amx_cw_relo3 \
 	amx_cw_swap amx_cw_restart_half amx_cw_restart_match amx_cw_pug_randomize \
 	amx_cw_pug_start amx_cw_pug_assign amx_cw_pug_stop amx_cw_config_menu \
-	amx_cw_setup amx_cw_settings amx_match \
+	amx_cw_setup amx_cw_settings amx_match amx_match2 amx_match3 amx_match4 \
+	amx_matchrestart amx_matchstop amx_matchstart amx_matchrelo3 amx_swapteams amx_randomizeteams \
 	amx_cw_presets amx_cw_preset amx_cw_map_menu amx_cw_save_config amx_cw_load_saved \
 	amx_cw_teams amx_cw_tags amx_cw_maps amx_cw_stop amx_cw_score amx_cw_scoreids \
 	amx_cw_scoreids_snapshot amx_cw_status; do
@@ -42,13 +44,14 @@ done
 
 for cvar in \
 	kgb_cw_format kgb_cw_ready_mode kgb_cw_time_limit_minutes kgb_cw_playout \
+	kgb_cw_playout_vote_default kgb_cw_time_limit_finish_round \
 	kgb_cw_overtime_max_cycles kgb_cw_team_a_name kgb_cw_team_b_name \
 	kgb_cw_team_a_tag kgb_cw_team_b_tag kgb_cw_map_count kgb_cw_knife_vote \
 	kgb_cw_pug_mode kgb_cw_set_hostname kgb_cw_set_password \
 	kgb_cw_client_demos kgb_cw_screenshots kgb_cw_file_stats \
 	kgb_cw_overtime_vote kgb_cw_overtime_vote_seconds kgb_cw_overtime_vote_default \
 	kgb_cw_pug_style kgb_cw_pug_persist kgb_cw_allow_menu_save kgb_cw_second_half_ready \
-	kgb_cw_swap_policy kgb_cw_hud_interval kgb_cw_scoreid_screenshots \
+	kgb_cw_swap_policy kgb_cw_hud_interval kgb_cw_scoreid_screenshots kgb_cw_screenshot_on_stop \
 	kgb_cw_display_name kgb_cw_chat_prefix; do
 	require_string "$CORE" "\"$cvar\""
 done
@@ -73,8 +76,8 @@ require_string "$CORE" 'new menu = menu_create(g_DisplayName, "menu_control_hand
 require_string "$CORE" 'formatex(title, charsmax(title), "%s: %L", g_DisplayName, id, "CW_KNIFE_TITLE")'
 require_string "$CORE" 'new menu = menu_create(title, "menu_knife_vote_handler")'
 require_string "$CORE" 'register_dictionary("kgb_clan_war.txt")'
-require_string "$CORE" 'addons/amxmodx/configs/kgb_clan_war/presets/%s.cfg'
-require_string "$CORE" 'addons/amxmodx/configs/kgb_clan_war_saved.cfg'
+require_string "$CORE" '"%s/kgb_clan_war/presets/%s.cfg", configsDir, preset'
+require_string "$CORE" '"%s/kgb_clan_war_saved.cfg", configsDir'
 require_string "$CORE" 'STATE_OVERTIME_VOTE'
 require_string "$CORE" 'menu_overtime_vote_handler'
 require_string "$CORE" 'show_hudmessage(id, "%s %s", g_ChatPrefix, message)'
@@ -91,11 +94,26 @@ require_string "$CORE" 'if (!start_warmup(true)) return PLUGIN_HANDLED'
 require_string "$CORE" 'if (g_Half == 2 && get_pcvar_num(g_CvarSecondHalfReady))'
 require_string "$CORE" 'if (team == CS_TEAM_CT || team == CS_TEAM_T) players[activeCount++] = players[i]'
 require_string "$CORE" 'recompute_overtime_votes()'
-require_string "$CORE" 'rotate_pug_mapcycle()'
+require_string "$CORE" 'recompute_knife_votes()'
+require_string "$CORE" 'g_KnifeVoteChoice[id]'
+require_string "$CORE" 'STATE_PLAYOUT_VOTE'
+require_string "$CORE" 'begin_playout_vote()'
+require_string "$CORE" 'if (g_Format == FORMAT_TL && g_TimeLimitExpired) complete_time_limit_half()'
+require_string "$CORE" 'if (g_ResetTlTimerAfterLo3 && g_Format == FORMAT_TL && !g_InOvertime) schedule_time_limit_half()'
+require_string "$CORE" 'if (!safe_configuration_state(id)) return PLUGIN_HANDLED'
+require_string "$CORE" 'g_MapNumber = oldMapNumber; g_MapCount = oldMapCount'
+require_string "$CORE" 'managed_config_file_valid(path, true)'
+require_string "$CORE" 'rename_file(temporaryPath, path)'
+require_string "$CORE" 'if (!runtime_config_valid(false) || !start_warmup(true))'
+require_string "$CORE" 'set_pcvar_string(g_CvarFormat, oldFormat)'
+require_string "$CORE" 'alternate_configured_pug_maps()'
 require_string "$CORE" '#define LI_PUG_ACTIVE "_kgbcw_pug_active"'
 require_string "$CORE" 'cw_console_ml(id, "CW_SCORE_MAP", g_MapNumber, labelA, g_TeamAScore, g_TeamBScore, labelB)'
 require_string "$CORE_CONFIG" 'kgb_cw_display_name "KGB Clan War"'
 require_string "$CORE_CONFIG" 'kgb_cw_chat_prefix "[KGB CW]"'
+require_string "$CORE_CONFIG" 'kgb_cw_playout_vote_default 1'
+require_string "$CORE_CONFIG" 'kgb_cw_time_limit_finish_round 1'
+require_string "$CORE_CONFIG" 'kgb_cw_screenshot_on_stop 0'
 require_string "$README" '`v0.3.0` is the next qualification candidate.'
 require_string "$README" 'KGB Hosting may install, run, modify, and redistribute it'
 require_string "$README" 'does not grant trademark rights'
@@ -140,6 +158,10 @@ require_string "$HLTV" 'enforce_disabled_recording_stop()'
 require_string "$HLTV" 'finish_rcon_request(sent)'
 require_string "$HLTV" 'if (operation == RCON_START_RECORDING)'
 require_string "$HLTV" 'if (g_Recording || g_RecordStartPending) task_stop_recording()'
+require_string "$HLTV" 'g_RecordRestartPending = true'
+require_string "$HLTV" 'stop_recording_on_unload()'
+require_string "$HLTV" 'socket_is_readable(g_RconSocket, 100000)'
+require_string "$HLTV" 'socket_change(g_RconSocket, 100000)'
 require_string "$HLTV" 'get_cvar_pointer("kgb_cw_chat_prefix")'
 require_string "$HLTV" 'get_hltv_prefix(prefix, charsmax(prefix))'
 
@@ -148,12 +170,14 @@ require_string "$MAP_CATALOG" 'de_dust2|Dust II'
 require_string "$LANG_CATALOG" '[en]'
 require_string "$LANG_CATALOG" '[de]'
 require_string "$LANG_CATALOG" 'CW_OVERTIME_TITLE'
+require_string "$LANG_CATALOG" 'CW_PLAYOUT_TITLE'
+require_string "$LANG_CATALOG" 'CW_TL_FINISH_ROUND'
 
 if grep -ERiq '(password|hostname|rcon|sql_|exec[[:space:]])' "$ROOT_DIR/configs/presets"; then
 	printf 'A clean-room preset contains a credential, external integration, or nested exec directive.\n' >&2
 	exit 1
 fi
-if grep -ERv '^[[:space:]]*(//|$|kgb_cw_(format|half_rounds|playout|overtime|overtime_vote|overtime_half_rounds|overtime_money|ready_mode|min_ready|pug_mode|pug_style|pug_persist|second_half_ready|swap_policy)[[:space:]])' \
+if grep -ERv '^[[:space:]]*(//|$|kgb_cw_(format|half_rounds|playout|playout_vote_default|time_limit_finish_round|overtime|overtime_vote|overtime_half_rounds|overtime_money|ready_mode|min_ready|pug_mode|pug_style|pug_persist|second_half_ready|swap_policy)[[:space:]])' \
 	"$ROOT_DIR/configs/presets"/*.cfg; then
 	printf 'A clean-room preset contains a CVAR outside the release allowlist.\n' >&2
 	exit 1
@@ -170,6 +194,10 @@ require_string "$SQL" 'set_localinfo(LI_SQL_MATCH_UID, g_MatchUid)'
 require_string "$SQL" 'restore_crossmap_match_uid()'
 require_string "$SQL" 'confirm_crossmap_resume()'
 require_string "$SQL" 'set_localinfo(LI_SQL_MATCH_UID, "")'
+require_string "$SQL" 'REPLACE INTO kgb_cw_players (match_uid,map_number,auth_id'
+require_string "$SQL" 'g_CurrentMapNumber = 2'
+require_string "$SQL" 'capture_connected_players()'
+require_string "$SQL_SCHEMA" 'PRIMARY KEY (match_uid, map_number, auth_id)'
 
 if grep -Eq 'register_cvar\("[^\"]*(sql_password|rcon_password|db_password)' "$HLTV" "$SQL"; then
 	printf 'Credential-bearing CVAR detected in optional integration source.\n' >&2

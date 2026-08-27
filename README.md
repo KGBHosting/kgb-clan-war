@@ -18,12 +18,12 @@ qualification evidence is complete.
 
 The qualification line includes the practical AMX Match Deluxe feature
 set: player/team/admin ready modes; max-round, win-limit, and time-limit
-formats; playout; knife stay/swap voting; team names and tags; one- or two-map
+formats; clinch/always/voted playout; knife stay/swap voting; team names and tags; one- or two-map
 matches; phase configs; operator-managed league presets and default-map menus;
 an allowlisted saved menu snapshot and setup wizard; fresh English/German
 message catalogs; an optional overtime play/draw vote; a second-half re-ready
 gate and configurable automatic side-swap policy; clearly separated live-map
-and series scores; admin-only SteamID reports and an opt-in screenshot view;
+and series scores; admin-only SteamID reports and automatic opt-in identity screenshots;
 interactive HLTV status/test/delay controls; match/half restart; persistent
 random or admin-drafted PUG sessions; recurring ready/score HUDs; optional
 hostname/password and client demo/screenshot actions; lifecycle plus per-half
@@ -138,13 +138,20 @@ access flag.
 | `amx_cw_score` | Show the public match score. |
 | `amx_cw_scoreids` | Print detailed score and player SteamIDs to an authorized admin's console only. |
 | `amx_cw_scoreids_snapshot` | Show an authorized admin the current score/SteamID MOTD, then request one screenshot when explicitly enabled. |
-| `amx_match <team-a> <team-b> [preset]` | One-shot compatibility launcher that applies an optional managed preset and enters warmup. |
+| `amx_match <team-a> <team-b> [preset]` | Compact KGB launcher that applies an optional managed preset and enters warmup. |
+| `amx_match <team-a> <team-b> <mrXX\|tlXX\|wlXX> <config> [recdemo\|rechltv\|recboth]` | Full legacy-compatible one-map launcher. |
+| `amx_match2 <mrXX\|tlXX\|wlXX> <config> [recdemo\|rechltv\|recboth]` | Full one-map launcher using the configured team names. |
+| `amx_match3 <team-a> <team-b> <mrXX\|tlXX\|wlXX> <config> <map2> [recdemo\|rechltv\|recboth]` | Full two-map launcher. Map one is the currently loaded map. |
+| `amx_match4 <mrXX\|tlXX\|wlXX> <config> <map2> [recdemo\|rechltv\|recboth]` | Full two-map launcher using the configured team names. |
+| `amx_matchrestart`, `amx_matchstop`, `amx_matchstart`, `amx_matchrelo3` | Legacy lifecycle aliases routed through the same state machine. |
+| `amx_swapteams`, `amx_randomizeteams` | Legacy team-control aliases with the normal KGB access and state checks. |
 | `amx_cw_status` | Show detailed match status. |
 
 Player chat shortcuts are `/ready`, `/notready`, `/teamready`,
 `/teamnotready`, `/start`, `/score`, and `/cw`; `!` prefixes also work. Bare
 `ready`, `notready`, `teamready`, and `teamnotready` are accepted for legacy
-client binds. `/start` still respects the configured state and access rules.
+client binds. `/start`, `/stop`, `/restart`, and `/relo3` still respect the
+configured state and access rules.
 
 ## Core configuration
 
@@ -164,7 +171,9 @@ The installer creates
 | `kgb_cw_half_rounds` | `15` | Regulation rounds per half for max-round mode. |
 | `kgb_cw_win_rounds` | `16` | Win target for win-limit mode. |
 | `kgb_cw_time_limit_minutes` | `20` | Minutes per half for time-limit mode. |
-| `kgb_cw_playout` | `0` | Play all scheduled regulation rounds after a winner is known. |
+| `kgb_cw_playout` | `0` | Regulation result handling: `0` ends when clinched, `1` always plays out, `2` asks active players. |
+| `kgb_cw_playout_vote_default` | `1` | Tied/no-vote playout decision: `1` continues, `0` ends. |
+| `kgb_cw_time_limit_finish_round` | `1` | Finish the active round after a time-limit half expires; `0` transitions immediately. Each half timer begins only after its LO3 completes. |
 | `kgb_cw_overtime` | `1` | Enable overtime for tied regulation. |
 | `kgb_cw_overtime_max_cycles` | `3` | Bound repeated overtime cycles; `0` explicitly means unlimited. |
 | `kgb_cw_overtime_half_rounds` | `3` | Overtime rounds per half. |
@@ -197,6 +206,7 @@ The installer creates
 | `kgb_cw_client_demos` | `0` | Request client demo recording. |
 | `kgb_cw_screenshots` | `0` | Request halftime/final screenshots. |
 | `kgb_cw_scoreid_screenshots` | `0` | Allow the admin-only detailed score/SteamID MOTD plus one screenshot request. |
+| `kgb_cw_screenshot_on_stop` | `0` | Apply enabled score/identity screenshot workflows to an administrator stop. |
 | `kgb_cw_file_stats` | `1` | Write lifecycle rows and connected-player half deltas/current-scoreboard K-D. |
 | `kgb_cw_hud_announcements` | `1` | Show match HUD announcements. |
 
@@ -232,7 +242,12 @@ SQL persistence uses threaded SQLX queries so match writes do not block the
 game loop. It creates the fixed `kgb_cw_*` tables listed in
 [`sql/schema.sql`](sql/schema.sql). Configure a least-privilege database account
 in AMX Mod X `sql.cfg`, then set `kgb_cw_sql_enabled 1`. Player rows include
-Steam authentication IDs, current names, team, kills, deaths, and headshots.
+Steam authentication IDs, map number, current names, team, kills, deaths, and
+headshots. The `(match_uid, map_number, auth_id)` key preserves map-one totals
+when map two starts and records connected zero-event players on each map. If a
+development server used an older v0.3.0 prerelease schema, drop and recreate
+`kgb_cw_players` before qualification; no public stable release used that
+schema.
 Operators are responsible for an appropriate notice, lawful basis, access
 control, retention period, and deletion process for that personal data.
 
@@ -242,10 +257,13 @@ and German translations for customer-visible controls and match lifecycle
 messages; operators can extend the AMX Mod X dictionary without recompiling.
 Technical server audit/error logs remain in English. Preset and map catalogs are
 operator-owned after first install. Catalog tokens are strictly validated,
-presets can only execute below the managed preset directory, and maps must be
-installed before they appear in the menu. The save workflow deliberately
-excludes `kgb_cw_password`, hostname changes, SQL settings, and HLTV RCON
-credentials.
+presets can only be read below the managed preset directory, and every line is
+prevalidated against the preset allowlist before any setting changes. Maps must
+be installed before they appear in the menu. Saved snapshots are likewise
+prevalidated, applied with rollback on runtime-validation failure, and written
+through a validated temporary file plus an atomic rename. The save workflow
+deliberately excludes `kgb_cw_password`, hostname changes, SQL settings, and
+HLTV RCON credentials.
 
 HLTV administrators can use `amx_cw_hltv_menu`, `amx_cw_hltv_status`,
 `amx_cw_hltv_test`, and `amx_cw_hltv_delay <0-3600>`. A delay/test action is
@@ -257,6 +275,9 @@ the authenticated request is sent, while a failed stop remains active/unknown
 instead of claiming success. Disabling the integration or automatic recording
 also requests a stop for any active or pending recording. Menu changes affect
 the running server only; edit `kgb_clan_war_hltv.cfg` to persist them.
+On plugin unload, a connected proxy is stopped directly; the RCON fallback
+performs one bounded 100 ms authenticated stop exchange and reports an
+active/unknown state rather than claiming success if the proxy does not answer.
 Credentials remain file-only and cannot be entered through the menu or a CVAR.
 
 ## Build and compatibility

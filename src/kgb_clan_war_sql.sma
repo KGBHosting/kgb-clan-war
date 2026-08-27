@@ -244,10 +244,10 @@ stock initialize_database()
     add(schemaQuery, charsmax(schemaQuery), "PRIMARY KEY (match_uid,map_number,half,event_type))")
     threaded_schema_query(schemaQuery)
 
-    copy(schemaQuery, charsmax(schemaQuery), "CREATE TABLE IF NOT EXISTS kgb_cw_players (match_uid VARCHAR(64) NOT NULL,auth_id VARCHAR(40) NOT NULL,")
+    copy(schemaQuery, charsmax(schemaQuery), "CREATE TABLE IF NOT EXISTS kgb_cw_players (match_uid VARCHAR(64) NOT NULL,map_number INTEGER NOT NULL,auth_id VARCHAR(40) NOT NULL,")
     add(schemaQuery, charsmax(schemaQuery), "player_name VARCHAR(64) NOT NULL,last_team VARCHAR(16) NOT NULL,kills INTEGER NOT NULL DEFAULT 0,")
     add(schemaQuery, charsmax(schemaQuery), "deaths INTEGER NOT NULL DEFAULT 0,headshots INTEGER NOT NULL DEFAULT 0,updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,")
-    add(schemaQuery, charsmax(schemaQuery), "PRIMARY KEY (match_uid,auth_id))")
+    add(schemaQuery, charsmax(schemaQuery), "PRIMARY KEY (match_uid,map_number,auth_id))")
     threaded_schema_query(schemaQuery)
 }
 
@@ -440,8 +440,9 @@ stock persist_player(id)
     formatex(
         query,
         charsmax(query),
-        "REPLACE INTO kgb_cw_players (match_uid,auth_id,player_name,last_team,kills,deaths,headshots,updated_at) VALUES ('%s','%s','%s','%s',%d,%d,%d,CURRENT_TIMESTAMP)",
+        "REPLACE INTO kgb_cw_players (match_uid,map_number,auth_id,player_name,last_team,kills,deaths,headshots,updated_at) VALUES ('%s',%d,'%s','%s','%s',%d,%d,%d,CURRENT_TIMESTAMP)",
         uid,
+        g_CurrentMapNumber,
         authId,
         playerName,
         team,
@@ -603,6 +604,8 @@ stock restore_crossmap_match_uid()
     {
         copy(g_MatchUid, charsmax(g_MatchUid), storedUid)
         g_MatchActive = true
+        g_CurrentMapNumber = 2
+        capture_connected_players()
         g_WaitingForCrossmapResume = true
         remove_task(TASK_VALIDATE_CROSSMAP)
         set_task(2.0, "task_validate_crossmap_resume", TASK_VALIDATE_CROSSMAP)
