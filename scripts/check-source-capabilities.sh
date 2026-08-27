@@ -6,6 +6,7 @@ CORE="$ROOT_DIR/src/kgb_clan_war.sma"
 HLTV="$ROOT_DIR/src/kgb_clan_war_hltv.sma"
 SQL="$ROOT_DIR/src/kgb_clan_war_sql.sma"
 SQL_SCHEMA="$ROOT_DIR/sql/schema.sql"
+SQL_MIGRATION="$ROOT_DIR/sql/migrate-v0.2.0-to-v0.3.0.sql"
 CORE_CONFIG="$ROOT_DIR/configs/kgb_clan_war.cfg.example"
 PRESET_CATALOG="$ROOT_DIR/configs/kgb_clan_war_presets.ini.example"
 MAP_CATALOG="$ROOT_DIR/configs/kgb_clan_war_maps.ini.example"
@@ -103,10 +104,18 @@ require_string "$CORE" 'if (g_ResetTlTimerAfterLo3 && g_Format == FORMAT_TL && !
 require_string "$CORE" 'if (!safe_configuration_state(id)) return PLUGIN_HANDLED'
 require_string "$CORE" 'g_MapNumber = oldMapNumber; g_MapCount = oldMapCount'
 require_string "$CORE" 'managed_config_file_valid(path, true)'
-require_string "$CORE" 'rename_file(temporaryPath, path)'
+require_string "$CORE" 'rename_file(temporaryPath, path, 1)'
 require_string "$CORE" 'if (!runtime_config_valid(false) || !start_warmup(true))'
 require_string "$CORE" 'set_pcvar_string(g_CvarFormat, oldFormat)'
-require_string "$CORE" 'alternate_configured_pug_maps()'
+require_string "$CORE" 'stock bool:capture_series_manifest()'
+require_string "$CORE" 'stock bool:persist_series_manifest()'
+require_string "$CORE" 'stock bool:restore_series_manifest()'
+require_string "$CORE" 'set_localinfo(LI_MANIFEST_ACTIVE, "1")'
+require_string "$CORE" 'new bool:resetTimerAfterLo3 = resetTlTimer || g_ResetTlTimerAfterLo3'
+require_string "$CORE" 'get_cvar_string("mapcyclefile", filename, charsmax(filename))'
+require_string "$CORE" 'stock bool:next_mapcycle_pair('
+require_string "$CORE" 'set_localinfo(LI_PUG_RESUME, "1")'
+require_string "$CORE" 'stock restore_legacy_record_mode()'
 require_string "$CORE" '#define LI_PUG_ACTIVE "_kgbcw_pug_active"'
 require_string "$CORE" 'cw_console_ml(id, "CW_SCORE_MAP", g_MapNumber, labelA, g_TeamAScore, g_TeamBScore, labelB)'
 require_string "$CORE_CONFIG" 'kgb_cw_display_name "KGB Clan War"'
@@ -194,10 +203,21 @@ require_string "$SQL" 'set_localinfo(LI_SQL_MATCH_UID, g_MatchUid)'
 require_string "$SQL" 'restore_crossmap_match_uid()'
 require_string "$SQL" 'confirm_crossmap_resume()'
 require_string "$SQL" 'set_localinfo(LI_SQL_MATCH_UID, "")'
-require_string "$SQL" 'REPLACE INTO kgb_cw_players (match_uid,map_number,auth_id'
+require_string "$SQL" 'ON DUPLICATE KEY UPDATE'
+require_string "$SQL" 'kills=kills+VALUES(kills)'
+require_string "$SQL" 'SHOW COLUMNS FROM kgb_cw_players LIKE '\''map_number'\'''
+require_string "$SQL" 'equal(columns, "match_uid,map_number,auth_id")'
+require_string "$SQL" 'g_PlayerPersistedKills[id] = g_PlayerKills[id]'
 require_string "$SQL" 'g_CurrentMapNumber = 2'
 require_string "$SQL" 'capture_connected_players()'
 require_string "$SQL_SCHEMA" 'PRIMARY KEY (match_uid, map_number, auth_id)'
+require_string "$SQL_MIGRATION" 'ADD COLUMN map_number INTEGER NOT NULL DEFAULT 1 AFTER match_uid;'
+require_string "$SQL_MIGRATION" 'ADD PRIMARY KEY (match_uid, map_number, auth_id);'
+
+if grep -Fq 'REPLACE INTO kgb_cw_players' "$SQL"; then
+	printf 'Player persistence still replaces accumulated rows.\n' >&2
+	exit 1
+fi
 
 if grep -Eq 'register_cvar\("[^\"]*(sql_password|rcon_password|db_password)' "$HLTV" "$SQL"; then
 	printf 'Credential-bearing CVAR detected in optional integration source.\n' >&2

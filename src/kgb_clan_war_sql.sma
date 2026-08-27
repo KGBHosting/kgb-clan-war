@@ -51,6 +51,9 @@ new g_PlayerTeam[33][16]
 new g_PlayerKills[33]
 new g_PlayerDeaths[33]
 new g_PlayerHeadshots[33]
+new g_PlayerPersistedKills[33]
+new g_PlayerPersistedDeaths[33]
+new g_PlayerPersistedHeadshots[33]
 
 public plugin_init()
 {
@@ -186,11 +189,75 @@ public query_schema_result(failState, Handle:query, error[], errorNumber, data[]
         return
     }
 
-    if (g_SchemaQueriesPending > 0)
-    {
-        g_SchemaQueriesPending--
-    }
+    schema_step_complete()
+}
 
+public query_player_table_ready(failState, Handle:query, error[], errorNumber, data[], dataSize, Float:queueTime)
+{
+    if (failState != TQUERY_SUCCESS)
+    {
+        database_query_failed("player schema create", error, errorNumber)
+        return
+    }
+    SQL_ThreadQuery(g_DbTuple, "query_player_schema_probe", "SHOW COLUMNS FROM kgb_cw_players LIKE 'map_number'")
+}
+
+public query_player_schema_probe(failState, Handle:query, error[], errorNumber, data[], dataSize, Float:queueTime)
+{
+    if (failState != TQUERY_SUCCESS)
+    {
+        database_query_failed("player schema probe", error, errorNumber)
+        return
+    }
+    if (SQL_NumResults(query) > 0)
+    {
+        SQL_ThreadQuery(g_DbTuple, "query_player_primary_probe", "SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',') FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='kgb_cw_players' AND INDEX_NAME='PRIMARY'")
+        return
+    }
+    SQL_ThreadQuery(g_DbTuple, "query_player_column_added", "ALTER TABLE kgb_cw_players ADD COLUMN map_number INTEGER NOT NULL DEFAULT 1 AFTER match_uid")
+}
+
+public query_player_primary_probe(failState, Handle:query, error[], errorNumber, data[], dataSize, Float:queueTime)
+{
+    if (failState != TQUERY_SUCCESS)
+    {
+        database_query_failed("player primary-key probe", error, errorNumber)
+        return
+    }
+    new columns[96]
+    if (SQL_NumResults(query) > 0) SQL_ReadResult(query, 0, columns, charsmax(columns))
+    if (equal(columns, "match_uid,map_number,auth_id"))
+    {
+        schema_step_complete()
+        return
+    }
+    SQL_ThreadQuery(g_DbTuple, "query_player_schema_migrated", "ALTER TABLE kgb_cw_players DROP PRIMARY KEY, ADD PRIMARY KEY (match_uid,map_number,auth_id)")
+}
+
+public query_player_column_added(failState, Handle:query, error[], errorNumber, data[], dataSize, Float:queueTime)
+{
+    if (failState != TQUERY_SUCCESS)
+    {
+        database_query_failed("player schema map column", error, errorNumber)
+        return
+    }
+    SQL_ThreadQuery(g_DbTuple, "query_player_schema_migrated", "ALTER TABLE kgb_cw_players DROP PRIMARY KEY, ADD PRIMARY KEY (match_uid,map_number,auth_id)")
+}
+
+public query_player_schema_migrated(failState, Handle:query, error[], errorNumber, data[], dataSize, Float:queueTime)
+{
+    if (failState != TQUERY_SUCCESS)
+    {
+        database_query_failed("player schema primary key", error, errorNumber)
+        return
+    }
+    server_print("[KGB CW SQL] Migrated the v0.2.0 player table to map-scoped rows.")
+    schema_step_complete()
+}
+
+stock schema_step_complete()
+{
+    if (g_SchemaQueriesPending > 0) g_SchemaQueriesPending--
     if (!g_SchemaQueriesPending && !g_DatabaseFailed)
     {
         g_SchemaReady = true
@@ -248,7 +315,7 @@ stock initialize_database()
     add(schemaQuery, charsmax(schemaQuery), "player_name VARCHAR(64) NOT NULL,last_team VARCHAR(16) NOT NULL,kills INTEGER NOT NULL DEFAULT 0,")
     add(schemaQuery, charsmax(schemaQuery), "deaths INTEGER NOT NULL DEFAULT 0,headshots INTEGER NOT NULL DEFAULT 0,updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,")
     add(schemaQuery, charsmax(schemaQuery), "PRIMARY KEY (match_uid,map_number,auth_id))")
-    threaded_schema_query(schemaQuery)
+    SQL_ThreadQuery(g_DbTuple, "query_player_table_ready", schemaQuery)
 }
 
 stock threaded_schema_query(const statement[])
@@ -430,6 +497,11 @@ stock persist_player(id)
         return
     }
 
+    new deltaKills = g_PlayerKills[id] - g_PlayerPersistedKills[id]
+    new deltaDeaths = g_PlayerDeaths[id] - g_PlayerPersistedDeaths[id]
+    new deltaHeadshots = g_PlayerHeadshots[id] - g_PlayerPersistedHeadshots[id]
+    if (deltaKills < 0 || deltaDeaths < 0 || deltaHeadshots < 0) return
+
     new uid[129], authId[81], playerName[129], team[33]
     quote_sql(g_MatchUid, uid, charsmax(uid))
     quote_sql(g_PlayerAuth[id], authId, charsmax(authId))
@@ -440,17 +512,20 @@ stock persist_player(id)
     formatex(
         query,
         charsmax(query),
-        "REPLACE INTO kgb_cw_players (match_uid,map_number,auth_id,player_name,last_team,kills,deaths,headshots,updated_at) VALUES ('%s',%d,'%s','%s','%s',%d,%d,%d,CURRENT_TIMESTAMP)",
+        "INSERT INTO kgb_cw_players (match_uid,map_number,auth_id,player_name,last_team,kills,deaths,headshots,updated_at) VALUES ('%s',%d,'%s','%s','%s',%d,%d,%d,CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE player_name=VALUES(player_name),last_team=VALUES(last_team),kills=kills+VALUES(kills),deaths=deaths+VALUES(deaths),headshots=headshots+VALUES(headshots),updated_at=CURRENT_TIMESTAMP",
         uid,
         g_CurrentMapNumber,
         authId,
         playerName,
         team,
-        g_PlayerKills[id],
-        g_PlayerDeaths[id],
-        g_PlayerHeadshots[id]
+        deltaKills,
+        deltaDeaths,
+        deltaHeadshots
     )
     run_write_query(query)
+    g_PlayerPersistedKills[id] = g_PlayerKills[id]
+    g_PlayerPersistedDeaths[id] = g_PlayerDeaths[id]
+    g_PlayerPersistedHeadshots[id] = g_PlayerHeadshots[id]
 }
 
 stock persist_all_players()
@@ -508,6 +583,9 @@ stock reset_player(id)
     g_PlayerKills[id] = 0
     g_PlayerDeaths[id] = 0
     g_PlayerHeadshots[id] = 0
+    g_PlayerPersistedKills[id] = 0
+    g_PlayerPersistedDeaths[id] = 0
+    g_PlayerPersistedHeadshots[id] = 0
 }
 
 stock reset_all_players()

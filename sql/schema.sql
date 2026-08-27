@@ -1,4 +1,4 @@
--- KGB Clan War optional SQLX persistence schema.
+-- KGB Clan War optional MySQL/MariaDB SQLX persistence schema.
 -- The plugin creates these tables automatically when kgb_cw_sql_enabled is 1.
 -- It uses the connection selected by AMX Mod X's standard sql.cfg.
 

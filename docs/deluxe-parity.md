@@ -13,7 +13,7 @@ were not copied. The public behavior reference is the
 | --- | --- |
 | League/config selection | Strict catalog plus managed preset directory; fresh generic MR15, MR12, and PUG examples. |
 | Default map selection | Operator-owned map catalog; menu selects one or two maps and hides maps not installed on the server. |
-| Saved menu setup | Opt-in snapshot containing an explicit non-secret CVAR allowlist plus an interactive settings wizard. Presets/snapshots are fully prevalidated before mutation; snapshots use validated temporary files and atomic rename. Password, hostname, SQL, and RCON values are excluded. |
+| Saved menu setup | Opt-in snapshot containing an explicit non-secret CVAR allowlist plus an interactive settings wizard. Presets/snapshots are fully prevalidated before mutation; snapshots use a validated temporary file and POSIX atomic replacement from the documented AMX Mod X mod-directory base. Password, hostname, SQL, and RCON values are excluded. Existing Windows snapshots fail closed because portable C-runtime replacement is not guaranteed. |
 | Multilingual UI | Fresh AMX Mod X dictionary with English and German customer-visible controls, match lifecycle, votes, HUD, score/identity, and HLTV UI; operators can extend it. |
 | Overtime and regulation play-out choices | Optional active-player play-overtime/accept-draw vote plus clinch/always/player-vote regulation playout, both with explicit tie/no-vote defaults. |
 | Time-limit halves | Each half timer starts after LO3, is reset by an administrator half restart, and by default lets the active round finish before the half transition. |
@@ -24,7 +24,9 @@ were not copied. The public behavior reference is the
 | Legacy score/identity view | Public current-map score, a separately labelled series aggregate, and `ADMIN_CFG`-only SteamID/current-scoreboard reports. Enabled identity evidence is requested automatically at half/map/match boundaries and optionally on administrator stop. |
 | File statistics | Lifecycle rows plus connected-player per-half deltas and current-scoreboard K-D; fields explicitly avoid implying cumulative identity statistics. |
 | HLTV configuration and delay | Admin menu/commands for enable, auto-record, status, harmless path test, and bounded proxy delay actually sent before `record`. RCON operations are serialized and pending/failure state is conservative. Credentials remain file-only. |
-| Broader PUG operation | Atomic validated start, spectator-safe randomization, admin-managed manual assignments, cross-map session state, and alternation of the configured two-map pair before persistent PUG warmup resumes. This is not claimed as general server mapcycle advancement. |
+| Broader PUG operation | Atomic validated start, spectator-safe randomization, admin-managed manual assignments, cross-map session state, and persistent advancement through validated installed entries in the server `mapcyclefile` before PUG warmup resumes. |
+| Immutable two-map series | A versioned manifest freezes the full match policy, topology, phase configs, client-demo policy, and HLTV recording mode at live start. Map two restores only after every field and active marker validate; terminal/failure paths invalidate the marker first and restore temporary recording overrides. |
+| SQL map/reconnect totals | The public v0.2.0 MySQL/MariaDB player table is upgraded to a map-scoped primary key. Delta upserts preserve map one, zero-event map-two players, and accumulated same-SteamID reconnect sessions without `REPLACE` data loss. |
 
 ## Deliberate non-equivalence
 

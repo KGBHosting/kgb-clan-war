@@ -59,6 +59,12 @@ jobs:
           AMXX_VERSION: "1.8.2"
         run: ./scripts/build.sh
 
+      - name: Test runtime state and filesystem regressions
+        run: ./scripts/test-runtime-regressions.sh
+
+      - name: Test public v0.2.0 SQL migration
+        run: ./scripts/test-sql-migration.sh
+
       - name: Test idempotent safe installation
         run: ./scripts/test-install.sh
 

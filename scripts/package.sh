@@ -66,7 +66,8 @@ rm -rf "$STAGE_DIR"
 rm -f "$ARCHIVE" "$ARCHIVE.sha256"
 mkdir -p "$STAGE_DIR/addons/amxmodx/plugins" "$STAGE_DIR/addons/amxmodx/configs" \
 	"$STAGE_DIR/addons/amxmodx/configs/kgb_clan_war/presets" "$STAGE_DIR/addons/amxmodx/data/lang" \
-	"$STAGE_DIR/compiled" "$STAGE_DIR/configs/presets" "$STAGE_DIR/data/lang" "$STAGE_DIR/docs" "$STAGE_DIR/src" "$STAGE_DIR/scripts"
+	"$STAGE_DIR/compiled" "$STAGE_DIR/configs/presets" "$STAGE_DIR/data/lang" "$STAGE_DIR/docs" "$STAGE_DIR/src" "$STAGE_DIR/scripts" \
+	"$STAGE_DIR/tests/sql"
 for plugin in kgb_clan_war kgb_clan_war_hltv kgb_clan_war_sql; do
 	cp "$ROOT_DIR/compiled/$plugin.amxx" "$ROOT_DIR/compiled/$plugin.amxx.sha256" \
 		"$STAGE_DIR/addons/amxmodx/plugins/"
@@ -87,8 +88,10 @@ cp "$ROOT_DIR/configs/kgb_clan_war_maps.ini.example" "$STAGE_DIR/addons/amxmodx/
 cp "$ROOT_DIR/configs/kgb_gamemode.cfg.example" "$STAGE_DIR/"
 cp "$ROOT_DIR"/src/*.sma "$STAGE_DIR/src/"
 mkdir -p "$STAGE_DIR/sql"
-cp "$ROOT_DIR/sql/schema.sql" "$STAGE_DIR/sql/"
+cp "$ROOT_DIR"/sql/*.sql "$STAGE_DIR/sql/"
 cp "$ROOT_DIR"/scripts/*.sh "$STAGE_DIR/scripts/"
+cp "$ROOT_DIR/tests/posix_rename_fixture.c" "$STAGE_DIR/tests/"
+cp "$ROOT_DIR/tests/sql"/*.sql "$STAGE_DIR/tests/sql/"
 cp "$ROOT_DIR"/docs/*.md "$STAGE_DIR/docs/"
 cp "$ROOT_DIR/README.md" "$ROOT_DIR/LICENSE" "$ROOT_DIR/SECURITY.md" "$STAGE_DIR/"
 

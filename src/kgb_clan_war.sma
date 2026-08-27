@@ -26,6 +26,10 @@
 #define MAX_BRANDED_MESSAGE 165
 #define MAX_PRESET_TOKEN 31
 #define MAX_CATALOG_LABEL 63
+#define SERIES_MANIFEST_MAX 64
+#define SERIES_MANIFEST_VALUE_MAX 127
+#define SERIES_MANIFEST_VERSION "1"
+#define MAX_MAPCYCLE_MAPS 128
 
 #define TASK_LO3_1 73101
 #define TASK_LO3_2 73102
@@ -41,6 +45,7 @@
 #define TASK_STATUS_HUD 73112
 #define TASK_SCOREID_SNAPSHOT 73113
 #define TASK_PLAYOUT_VOTE 73114
+#define TASK_PUG_MAP_CHANGE 73115
 #define TASK_KNIFE_EQUIP 73200
 
 #define LI_ACTIVE "_kgbcw_active"
@@ -55,6 +60,18 @@
 #define LI_TEAM_A_SIDE "_kgbcw_a_side"
 #define LI_PUG_ACTIVE "_kgbcw_pug_active"
 #define LI_PUG_STYLE "_kgbcw_pug_style"
+#define LI_MANIFEST_ACTIVE "_kgbcw_manifest"
+#define LI_MANIFEST_VERSION "_kgbcw_manifest_v"
+#define LI_MANIFEST_COUNT "_kgbcw_manifest_n"
+#define LI_MANIFEST_ID "_kgbcw_manifest_id"
+#define LI_LEGACY_RECORD "_kgbcw_legacy_rec"
+#define LI_LEGACY_CLIENT "_kgbcw_legacy_client"
+#define LI_LEGACY_HLTV_ENABLED "_kgbcw_legacy_he"
+#define LI_LEGACY_HLTV_AUTO "_kgbcw_legacy_ha"
+#define LI_PUG_RESUME "_kgbcw_pug_resume"
+#define LI_PUG_NEXT "_kgbcw_pug_next"
+#define LI_PUG_FOLLOWING "_kgbcw_pug_follow"
+#define LI_PUG_RESUME_STYLE "_kgbcw_pug_rstyle"
 
 enum MatchState { STATE_OFF = 0, STATE_WARMUP, STATE_KNIFE, STATE_KNIFE_VOTE, STATE_LIVE, STATE_HALFTIME, STATE_HALF_READY, STATE_OVERTIME_VOTE, STATE_PLAYOUT_VOTE, STATE_FINISHED }
 enum MatchFormat { FORMAT_MR = 0, FORMAT_TL, FORMAT_WL }
@@ -82,9 +99,15 @@ new g_HalfKillsStart[MAX_PLAYERS + 1], g_HalfDeathsStart[MAX_PLAYERS + 1]
 new g_OvertimeYesVotes, g_OvertimeNoVotes
 new g_PlayoutYesVotes, g_PlayoutNoVotes
 new bool:g_PlayoutDecisionMade, bool:g_TimeLimitExpired, bool:g_ResetTlTimerAfterLo3
+new bool:g_SeriesManifestCaptured
+new g_SeriesManifestValues[SERIES_MANIFEST_MAX][SERIES_MANIFEST_VALUE_MAX + 1]
+new g_SeriesRestoreValues[SERIES_MANIFEST_MAX][SERIES_MANIFEST_VALUE_MAX + 1]
+new bool:g_LegacyRecordOverride
+new g_LegacyOldClientDemos, g_LegacyOldHltvEnabled = -1, g_LegacyOldHltvAuto = -1
 new g_KnifeVoteChoice[MAX_PLAYERS + 1]
 new bool:g_MapMenuSecond[MAX_PLAYERS + 1]
 new g_MapMenuFirst[MAX_PLAYERS + 1][MAX_MAP_TOKEN + 1]
+new g_MapcycleMaps[MAX_MAPCYCLE_MAPS][MAX_MAP_TOKEN + 1]
 
 new g_MapNumber = 1, g_MapCount = 1
 new g_Map1[MAX_MAP_TOKEN + 1], g_Map2[MAX_MAP_TOKEN + 1]
@@ -138,6 +161,23 @@ new const g_ManagedConfigNames[][] = {
     "kgb_cw_pug_persist", "kgb_cw_screenshots", "kgb_cw_scoreid_screenshots", "kgb_cw_screenshot_on_stop"
 }
 new g_ConfigRollbackValues[sizeof g_ManagedConfigNames][128]
+
+enum SeriesExtraConfigIndex
+{
+    SC_AUTO_LIVE = 0, SC_HUD_ANNOUNCEMENTS, SC_WARMUP_CONFIG, SC_MATCH_CONFIG,
+    SC_OVERTIME_CONFIG, SC_DEFAULT_CONFIG, SC_HALFTIME_DELAY, SC_KNIFE_VOTE,
+    SC_KNIFE_VOTE_SECONDS, SC_SET_HOSTNAME, SC_HOSTNAME, SC_SET_PASSWORD,
+    SC_PASSWORD, SC_DISABLE_SHIELD, SC_CLIENT_DEMOS, SC_FILE_STATS,
+    SC_HLTV_ENABLED, SC_HLTV_AUTO_RECORD
+}
+
+new const g_SeriesExtraConfigNames[][] = {
+    "kgb_cw_auto_live", "kgb_cw_hud_announcements", "kgb_cw_warmup_config", "kgb_cw_match_config",
+    "kgb_cw_overtime_config", "kgb_cw_default_config", "kgb_cw_halftime_delay", "kgb_cw_knife_vote",
+    "kgb_cw_knife_vote_seconds", "kgb_cw_set_hostname", "kgb_cw_hostname", "kgb_cw_set_password",
+    "kgb_cw_password", "kgb_cw_disable_shield", "kgb_cw_client_demos", "kgb_cw_file_stats",
+    "kgb_cw_hltv_enabled", "kgb_cw_hltv_auto_record"
+}
 
 public plugin_init()
 {
@@ -277,6 +317,9 @@ public plugin_end()
     {
         stop_client_demos()
         restore_environment()
+        restore_legacy_record_mode()
+        clear_pug_resume_state()
+        discard_series_manifest()
     }
     if (g_ForwardEvent >= 0) DestroyForward(g_ForwardEvent)
 }
@@ -656,6 +699,7 @@ public command_legacy_match(id, level, cid)
         configure_legacy_match(id, teamA, teamB, rule, config, "", recordMode)
         return PLUGIN_HANDLED
     }
+    restore_legacy_record_mode()
     new teamA[MAX_TEAM_NAME + 1], teamB[MAX_TEAM_NAME + 1], preset[MAX_PRESET_TOKEN + 1]
     read_argv(1, teamA, charsmax(teamA)); read_argv(2, teamB, charsmax(teamB)); read_argv(3, preset, charsmax(preset))
     trim(teamA); trim(teamB); strtolower(preset)
@@ -707,6 +751,7 @@ public command_legacy_match4(id, level, cid)
 
 stock bool:configure_legacy_match(id, const teamAInput[], const teamBInput[], const ruleInput[], const configInput[], const secondMapInput[], const recordModeInput[])
 {
+    restore_legacy_record_mode()
     new teamA[MAX_TEAM_NAME + 1], teamB[MAX_TEAM_NAME + 1], rule[16], config[MAX_CONFIG_TOKEN + 1]
     new secondMap[MAX_MAP_TOKEN + 1], recordMode[16], configPath[MAX_CONFIG_TOKEN + 5], currentMap[MAX_MAP_TOKEN + 1]
     copy(teamA, charsmax(teamA), teamAInput); copy(teamB, charsmax(teamB), teamBInput); trim(teamA); trim(teamB)
@@ -777,6 +822,13 @@ stock bool:configure_legacy_match(id, const teamAInput[], const teamBInput[], co
         cw_console_ml(id, "CW_ERR_LEGACY_START")
         return false
     }
+    if (recordMode[0])
+    {
+        g_LegacyRecordOverride = true
+        g_LegacyOldClientDemos = oldClientDemos
+        g_LegacyOldHltvEnabled = hasHltvEnabled ? oldHltvEnabled : -1
+        g_LegacyOldHltvAuto = hasHltvAuto ? oldHltvAuto : -1
+    }
     announce_ml("CW_LEGACY_STARTED", teamA, teamB)
     return true
 }
@@ -816,13 +868,25 @@ stock bool:apply_legacy_record_mode(const mode[], bool:apply)
     if ((equal(mode, "rechltv") || equal(mode, "recboth")) &&
         (!cvar_exists("kgb_cw_hltv_enabled") || !cvar_exists("kgb_cw_hltv_auto_record"))) return false
     if (!apply) return true
-    if (equal(mode, "recdemo") || equal(mode, "recboth")) set_pcvar_num(g_CvarClientDemos, 1)
+    set_pcvar_num(g_CvarClientDemos, equal(mode, "recdemo") || equal(mode, "recboth"))
+    if (cvar_exists("kgb_cw_hltv_auto_record"))
+        set_cvar_num("kgb_cw_hltv_auto_record", equal(mode, "rechltv") || equal(mode, "recboth"))
     if (equal(mode, "rechltv") || equal(mode, "recboth"))
     {
         if (cvar_exists("kgb_cw_hltv_enabled")) set_cvar_num("kgb_cw_hltv_enabled", 1)
-        if (cvar_exists("kgb_cw_hltv_auto_record")) set_cvar_num("kgb_cw_hltv_auto_record", 1)
     }
     return true
+}
+
+stock restore_legacy_record_mode()
+{
+    if (!g_LegacyRecordOverride) return
+    set_pcvar_num(g_CvarClientDemos, g_LegacyOldClientDemos)
+    if (g_LegacyOldHltvEnabled >= 0 && cvar_exists("kgb_cw_hltv_enabled")) set_cvar_num("kgb_cw_hltv_enabled", g_LegacyOldHltvEnabled)
+    if (g_LegacyOldHltvAuto >= 0 && cvar_exists("kgb_cw_hltv_auto_record")) set_cvar_num("kgb_cw_hltv_auto_record", g_LegacyOldHltvAuto)
+    g_LegacyRecordOverride = false
+    g_LegacyOldClientDemos = 0; g_LegacyOldHltvEnabled = -1; g_LegacyOldHltvAuto = -1
+    audit_event("legacy_record_mode_restored")
 }
 
 stock show_identity_motd(id)
@@ -1283,25 +1347,31 @@ public task_resume_crossmap()
 {
     new active[4]
     get_localinfo(LI_ACTIVE, active, charsmax(active))
-    if (!equal(active, "1")) return
+    if (!equal(active, "1"))
+    {
+        if (!resume_persistent_pug()) clear_series_manifest_storage()
+        return
+    }
 
-    new expected[MAX_MAP_TOKEN + 1], current[MAX_MAP_TOKEN + 1], value[32]
+    new expected[MAX_MAP_TOKEN + 1], current[MAX_MAP_TOKEN + 1], value[32], storedMatchId[MAX_MATCH_ID + 1]
     get_localinfo(LI_MAP, expected, charsmax(expected)); get_mapname(current, charsmax(current))
-    if (!valid_map_token(expected) || !equali(expected, current) || !load_runtime_settings(true))
+    get_localinfo(LI_MATCH_ID, storedMatchId, charsmax(storedMatchId))
+    if (!valid_map_token(expected) || !equali(expected, current) ||
+        !restore_crossmap_record_state() || !restore_series_manifest() ||
+        !equal(storedMatchId, g_MatchId) || !load_runtime_settings(true))
     {
         log_amx("Rejected stale or invalid cross-map match state")
-        restore_crossmap_environment(); clear_crossmap_state(); return
+        restore_crossmap_environment(); restore_legacy_record_mode(); clear_crossmap_state(); discard_series_manifest(); return
     }
     get_localinfo(LI_SCORE_A, value, charsmax(value)); g_PreviousMapScoreA = clamp(str_to_num(value), 0, 1000)
     get_localinfo(LI_SCORE_B, value, charsmax(value)); g_PreviousMapScoreB = clamp(str_to_num(value), 0, 1000)
-    get_localinfo(LI_MATCH_ID, g_MatchId, charsmax(g_MatchId))
     load_env_snapshot()
     get_localinfo(LI_TEAM_A_SIDE, value, charsmax(value))
     new restoredSide = str_to_num(value)
     if (restoredSide != _:CS_TEAM_CT && restoredSide != _:CS_TEAM_T)
     {
         log_amx("Rejected invalid cross-map team side")
-        restore_environment(); clear_crossmap_state(); return
+        restore_environment(); restore_legacy_record_mode(); clear_crossmap_state(); discard_series_manifest(); return
     }
     g_TeamASide = CsTeams:restoredSide
     get_localinfo(LI_PUG_ACTIVE, value, charsmax(value)); g_PugActive = bool:equal(value, "1")
@@ -1613,6 +1683,156 @@ stock bool:managed_config_value_valid(index, const value[])
     return false
 }
 
+stock series_manifest_count()
+{
+    return sizeof g_ManagedConfigNames + sizeof g_SeriesExtraConfigNames
+}
+
+stock series_manifest_cvar_name(index, output[], length)
+{
+    if (index < sizeof g_ManagedConfigNames) copy(output, length, g_ManagedConfigNames[index])
+    else copy(output, length, g_SeriesExtraConfigNames[index - sizeof g_ManagedConfigNames])
+}
+
+stock bool:series_config_file_valid(const value[])
+{
+    if (!value[0]) return true
+    if (!valid_simple_token(value, MAX_CONFIG_TOKEN)) return false
+    new path[MAX_CONFIG_TOKEN + 5]
+    formatex(path, charsmax(path), "%s.cfg", value)
+    return bool:file_exists(path)
+}
+
+stock bool:series_extra_value_valid(index, const value[])
+{
+    new SeriesExtraConfigIndex:extraIndex = SeriesExtraConfigIndex:index
+    if (extraIndex == SC_HLTV_ENABLED || extraIndex == SC_HLTV_AUTO_RECORD)
+    {
+        if (equal(value, "-")) return true
+    }
+    switch (extraIndex)
+    {
+        case SC_WARMUP_CONFIG, SC_MATCH_CONFIG, SC_OVERTIME_CONFIG, SC_DEFAULT_CONFIG:
+            return series_config_file_valid(value)
+        case SC_HOSTNAME: return !value[0] || valid_runtime_cvar_value(value, 127)
+        case SC_PASSWORD: return !value[0] || valid_runtime_cvar_value(value, 63)
+    }
+    if (!is_decimal_number(value)) return false
+    new number = str_to_num(value)
+    switch (extraIndex)
+    {
+        case SC_HALFTIME_DELAY: return number >= 1 && number <= 30
+        case SC_KNIFE_VOTE_SECONDS: return number >= 5 && number <= 30
+        case SC_AUTO_LIVE, SC_HUD_ANNOUNCEMENTS, SC_KNIFE_VOTE, SC_SET_HOSTNAME,
+            SC_SET_PASSWORD, SC_DISABLE_SHIELD, SC_CLIENT_DEMOS, SC_FILE_STATS,
+            SC_HLTV_ENABLED, SC_HLTV_AUTO_RECORD: return number == 0 || number == 1
+    }
+    return false
+}
+
+stock bool:series_manifest_value_valid(index, const value[])
+{
+    if (index < sizeof g_ManagedConfigNames) return managed_config_value_valid(index, value)
+    return series_extra_value_valid(index - sizeof g_ManagedConfigNames, value)
+}
+
+stock bool:capture_series_manifest()
+{
+    g_SeriesManifestCaptured = false
+    clear_series_manifest_storage()
+    new count = series_manifest_count()
+    if (count > SERIES_MANIFEST_MAX) return false
+    new cvarName[64]
+    for (new index = 0; index < count; index++)
+    {
+        series_manifest_cvar_name(index, cvarName, charsmax(cvarName))
+        if (!cvar_exists(cvarName))
+        {
+            new SeriesExtraConfigIndex:extraIndex = SeriesExtraConfigIndex:(index - sizeof g_ManagedConfigNames)
+            if (index >= sizeof g_ManagedConfigNames &&
+                (extraIndex == SC_HLTV_ENABLED || extraIndex == SC_HLTV_AUTO_RECORD))
+                copy(g_SeriesManifestValues[index], charsmax(g_SeriesManifestValues[]), "-")
+            else return false
+        }
+        else get_cvar_string(cvarName, g_SeriesManifestValues[index], charsmax(g_SeriesManifestValues[]))
+        trim(g_SeriesManifestValues[index])
+        if (!series_manifest_value_valid(index, g_SeriesManifestValues[index])) return false
+    }
+    g_SeriesManifestCaptured = true
+    return true
+}
+
+stock bool:persist_series_manifest()
+{
+    if (!g_SeriesManifestCaptured || !valid_simple_token(g_MatchId, MAX_MATCH_ID)) return false
+    new count = series_manifest_count(), key[32], value[16]
+    set_localinfo(LI_MANIFEST_ACTIVE, "")
+    for (new index = 0; index < count; index++)
+    {
+        if (!series_manifest_value_valid(index, g_SeriesManifestValues[index])) return false
+        formatex(key, charsmax(key), "_kgbcw_m%02d", index)
+        set_localinfo(key, g_SeriesManifestValues[index])
+    }
+    set_localinfo(LI_MANIFEST_VERSION, SERIES_MANIFEST_VERSION)
+    num_to_str(count, value, charsmax(value)); set_localinfo(LI_MANIFEST_COUNT, value)
+    set_localinfo(LI_MANIFEST_ID, g_MatchId)
+    set_localinfo(LI_MANIFEST_ACTIVE, "1")
+    return true
+}
+
+stock bool:restore_series_manifest()
+{
+    new active[4], version[8], countValue[8], manifestId[MAX_MATCH_ID + 1]
+    get_localinfo(LI_MANIFEST_ACTIVE, active, charsmax(active))
+    get_localinfo(LI_MANIFEST_VERSION, version, charsmax(version))
+    get_localinfo(LI_MANIFEST_COUNT, countValue, charsmax(countValue))
+    get_localinfo(LI_MANIFEST_ID, manifestId, charsmax(manifestId))
+    new count = series_manifest_count()
+    if (!equal(active, "1") || !equal(version, SERIES_MANIFEST_VERSION) || str_to_num(countValue) != count ||
+        !valid_simple_token(manifestId, MAX_MATCH_ID)) return false
+
+    new key[32], cvarName[64]
+    for (new index = 0; index < count; index++)
+    {
+        formatex(key, charsmax(key), "_kgbcw_m%02d", index)
+        get_localinfo(key, g_SeriesRestoreValues[index], charsmax(g_SeriesRestoreValues[]))
+        if (!series_manifest_value_valid(index, g_SeriesRestoreValues[index])) return false
+        series_manifest_cvar_name(index, cvarName, charsmax(cvarName))
+        if (!equal(g_SeriesRestoreValues[index], "-") && !cvar_exists(cvarName)) return false
+    }
+    for (new index = 0; index < count; index++)
+    {
+        copy(g_SeriesManifestValues[index], charsmax(g_SeriesManifestValues[]), g_SeriesRestoreValues[index])
+        if (equal(g_SeriesRestoreValues[index], "-")) continue
+        series_manifest_cvar_name(index, cvarName, charsmax(cvarName))
+        if (!cvar_exists(cvarName)) return false
+        set_cvar_string(cvarName, g_SeriesRestoreValues[index])
+    }
+    copy(g_MatchId, charsmax(g_MatchId), manifestId)
+    refresh_branding(false)
+    g_SeriesManifestCaptured = true
+    return true
+}
+
+stock clear_series_manifest_storage()
+{
+    new count = series_manifest_count(), key[32]
+    set_localinfo(LI_MANIFEST_ACTIVE, "")
+    set_localinfo(LI_MANIFEST_VERSION, ""); set_localinfo(LI_MANIFEST_COUNT, ""); set_localinfo(LI_MANIFEST_ID, "")
+    for (new index = 0; index < count; index++)
+    {
+        formatex(key, charsmax(key), "_kgbcw_m%02d", index)
+        set_localinfo(key, "")
+    }
+}
+
+stock discard_series_manifest()
+{
+    clear_series_manifest_storage()
+    g_SeriesManifestCaptured = false
+    for (new index = 0; index < SERIES_MANIFEST_MAX; index++) g_SeriesManifestValues[index][0] = 0
+}
+
 stock bool:managed_config_file_valid(const path[], bool:preset)
 {
     new line[256], length, name[64], value[128]
@@ -1717,7 +1937,9 @@ stock save_menu_config(id)
     written = written && save_number_cvar(temporaryPath, "kgb_cw_screenshots", g_CvarScreenshots)
     written = written && save_number_cvar(temporaryPath, "kgb_cw_scoreid_screenshots", g_CvarScoreIdScreenshots)
     written = written && save_number_cvar(temporaryPath, "kgb_cw_screenshot_on_stop", g_CvarScreenshotOnStop)
-    if (!written || !managed_config_file_valid(temporaryPath, false) || !rename_file(temporaryPath, path))
+    /* write_file/file_exists are mod-directory relative. Match that base for
+     * rename_file; relative=0 incorrectly resolves from the HLDS process cwd. */
+    if (!written || !managed_config_file_valid(temporaryPath, false) || !rename_file(temporaryPath, path, 1))
     {
         if (file_exists(temporaryPath)) delete_file(temporaryPath)
         cw_console_ml(id, "CW_ERR_SAVE_REPLACE")
@@ -1771,7 +1993,12 @@ stock bool:start_warmup(bool:resetData)
         announce_ml("CW_ERR_WARMUP_CONFIG")
         return false
     }
-    if (resetData) close_active_lifecycle("warmup_match_stop")
+    if (resetData)
+    {
+        close_active_lifecycle("warmup_match_stop")
+        restore_legacy_record_mode()
+        discard_series_manifest()
+    }
     cancel_transition_tasks()
     if (resetData) { reset_match_data(true); g_KnifeDecisionMade = false; g_PugActive = false; }
     reset_ready_players()
@@ -1795,6 +2022,7 @@ stock start_knife_round()
         return
     }
     close_active_lifecycle("knife_match_stop")
+    restore_legacy_record_mode(); discard_series_manifest()
     cancel_transition_tasks(); reset_match_data(true); reset_ready_players(); g_KnifeDecisionMade = false
     load_runtime_settings(false)
     snapshot_environment(); apply_environment(false); set_cw_state(STATE_KNIFE)
@@ -1805,15 +2033,28 @@ stock start_knife_round()
 
 stock start_live_match(bool:preserveSides)
 {
+    new bool:restarting = g_State == STATE_LIVE || g_State == STATE_HALFTIME || g_State == STATE_HALF_READY || g_State == STATE_OVERTIME_VOTE || g_State == STATE_PLAYOUT_VOTE
     if (!runtime_config_valid(true))
     {
+        /* A rejected restart must leave the running series and its immutable
+         * manifest untouched. A pre-live legacy launch may safely unwind. */
+        if (!restarting) { restore_legacy_record_mode(); discard_series_manifest(); }
         announce_ml("CW_ERR_MATCH_CONFIG")
         return
     }
-    new bool:restarting = g_State == STATE_LIVE || g_State == STATE_HALFTIME || g_State == STATE_HALF_READY || g_State == STATE_OVERTIME_VOTE || g_State == STATE_PLAYOUT_VOTE
-    if (restarting) close_active_lifecycle("restart_match_stop")
+    if (restarting)
+    {
+        close_active_lifecycle("restart_match_stop")
+        restore_legacy_record_mode()
+        discard_series_manifest()
+    }
     cancel_transition_tasks()
-    load_runtime_settings(false)
+    if (!load_runtime_settings(false) || !capture_series_manifest())
+    {
+        restore_legacy_record_mode(); discard_series_manifest()
+        announce_ml("CW_ERR_MATCH_CONFIG")
+        return
+    }
 
     reset_match_data(!preserveSides); reset_ready_players(); snapshot_environment(); apply_environment(false)
     create_match_id(); execute_phase_config(g_CvarMatchConfig, "match"); set_cw_state(STATE_LIVE)
@@ -1828,9 +2069,10 @@ stock start_live_match(bool:preserveSides)
 
 stock begin_lo3(bool:resetRoundTracking, bool:resetTlTimer = false)
 {
+    new bool:resetTimerAfterLo3 = resetTlTimer || g_ResetTlTimerAfterLo3
     cancel_lo3_tasks(); if (resetRoundTracking) g_RoundsThisHalf = 0
-    g_ResetTlTimerAfterLo3 = resetTlTimer
-    if (resetTlTimer) { remove_task(TASK_TIME_LIMIT); g_TimeLimitExpired = false; }
+    g_ResetTlTimerAfterLo3 = resetTimerAfterLo3
+    if (resetTimerAfterLo3) { remove_task(TASK_TIME_LIMIT); g_TimeLimitExpired = false; }
     g_Lo3Running = true; g_RoundResolved = true; set_cw_state(STATE_LIVE)
     set_task(0.1, "task_restart_first", TASK_LO3_1)
     set_task(2.1, "task_restart_second", TASK_LO3_2)
@@ -1863,7 +2105,8 @@ stock stop_match(bool:administrator)
     }
     if (administrator && hadActiveMatch && get_pcvar_num(g_CvarScreenshotOnStop)) take_match_screenshots()
     stop_client_demos(); restore_environment(); execute_phase_config(g_CvarDefaultConfig, "default")
-    reset_match_data(true); reset_ready_players(); clear_crossmap_state(); set_cw_state(STATE_OFF)
+    restore_legacy_record_mode()
+    reset_match_data(true); reset_ready_players(); clear_crossmap_state(); discard_series_manifest(); clear_pug_resume_state(); set_cw_state(STATE_OFF)
     server_cmd("sv_restart 1"); announce_ml("CW_MATCH_STOPPED")
 }
 
@@ -2202,10 +2445,16 @@ stock evaluate_overtime_progress()
 stock begin_map_transition()
 {
     if (!valid_map_token(g_Map2)) { announce_ml("CW_ERR_MAP2_INVALID"); finish_match(false); return; }
+    g_PreviousMapScoreA = g_TeamAScore; g_PreviousMapScoreB = g_TeamBScore
+    if (!persist_crossmap_state())
+    {
+        log_amx("Could not persist the validated series manifest; map two will not start")
+        finish_match(false)
+        return
+    }
     emit_match_event("map_change"); write_stats_event("map_change")
     take_match_screenshots(); stop_client_demos()
-    g_PreviousMapScoreA = g_TeamAScore; g_PreviousMapScoreB = g_TeamBScore
-    persist_crossmap_state(); g_MapChangePending = true; set_cw_state(STATE_HALFTIME)
+    g_MapChangePending = true; set_cw_state(STATE_HALFTIME)
     announce_ml("CW_MAP1_COMPLETE", g_PreviousMapScoreA, g_PreviousMapScoreB, g_Map2)
     set_task(5.0, "task_change_map", TASK_MAP_CHANGE)
 }
@@ -2221,22 +2470,154 @@ stock finish_match(bool:stopped)
     get_team_label(0, labelA, charsmax(labelA)); get_team_label(1, labelB, charsmax(labelB))
     if (total_score_a() == total_score_b()) announce_ml("CW_MATCH_DRAW", labelA, total_score_a(), total_score_b(), labelB)
     else announce_ml("CW_MATCH_WIN", total_score_a() > total_score_b() ? labelA : labelB, total_score_a(), total_score_b())
-    restore_environment(); execute_phase_config(g_CvarDefaultConfig, "default"); clear_crossmap_state()
+    restore_environment(); execute_phase_config(g_CvarDefaultConfig, "default")
+    restore_legacy_record_mode(); clear_crossmap_state(); discard_series_manifest()
     if (resumePug)
     {
-        alternate_configured_pug_maps()
-        set_task(8.0, "task_return_to_warmup", TASK_WARMUP)
+        if (!schedule_persistent_pug_advance()) set_task(8.0, "task_return_to_warmup", TASK_WARMUP)
     }
 }
 
-stock alternate_configured_pug_maps()
+stock bool:valid_mapcycle_filename(const value[])
 {
-    if (g_MapCount != 2 || !valid_map_token(g_Map1) || !valid_map_token(g_Map2)) return
-    new oldMap1[MAX_MAP_TOKEN + 1]
-    copy(oldMap1, charsmax(oldMap1), g_Map1)
-    copy(g_Map1, charsmax(g_Map1), g_Map2); copy(g_Map2, charsmax(g_Map2), oldMap1)
-    set_pcvar_string(g_CvarMap1, g_Map1); set_pcvar_string(g_CvarMap2, g_Map2)
-    audit_event("pug_configured_maps_alternated")
+    new length = strlen(value)
+    if (length < 5 || length > 63 || !equali(value[length - 4], ".txt")) return false
+    for (new index = 0; index < length; index++)
+    {
+        new c = value[index]
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.')) return false
+    }
+    return true
+}
+
+stock load_valid_mapcycle()
+{
+    new filename[64]
+    get_cvar_string("mapcyclefile", filename, charsmax(filename)); trim(filename)
+    if (!valid_mapcycle_filename(filename) || !file_exists(filename)) return 0
+
+    new count, line[192], length, map[MAX_MAP_TOKEN + 1]
+    for (new lineNumber = 0; count < MAX_MAPCYCLE_MAPS && read_file(filename, lineNumber, line, charsmax(line), length); lineNumber++)
+    {
+        trim(line)
+        if (!line[0] || line[0] == ';' || line[0] == '#' || (line[0] == '/' && line[1] == '/')) continue
+        parse(line, map, charsmax(map)); strtolower(map)
+        if (!valid_map_token(map)) continue
+        copy(g_MapcycleMaps[count], charsmax(g_MapcycleMaps[]), map)
+        count++
+    }
+    return count
+}
+
+stock bool:next_mapcycle_pair(const current[], nextMap[], nextLength, followingMap[], followingLength)
+{
+    new count = load_valid_mapcycle()
+    if (!count) return false
+    new currentIndex = -1
+    for (new index = 0; index < count; index++)
+    {
+        if (equali(g_MapcycleMaps[index], current)) { currentIndex = index; break; }
+    }
+    new nextIndex = -1
+    if (currentIndex < 0) nextIndex = 0
+    else
+    {
+        for (new offset = 1; offset <= count; offset++)
+        {
+            new candidate = (currentIndex + offset) % count
+            if (!equali(g_MapcycleMaps[candidate], current))
+            {
+                nextIndex = candidate
+                break
+            }
+        }
+    }
+    if (nextIndex < 0) return false
+    copy(nextMap, nextLength, g_MapcycleMaps[nextIndex])
+    followingMap[0] = 0
+    if (count > 1)
+    {
+        for (new offset = 1; offset < count; offset++)
+        {
+            new candidate = (nextIndex + offset) % count
+            if (!equali(g_MapcycleMaps[candidate], nextMap))
+            {
+                copy(followingMap, followingLength, g_MapcycleMaps[candidate])
+                break
+            }
+        }
+    }
+    return true
+}
+
+stock bool:schedule_persistent_pug_advance()
+{
+    new current[MAX_MAP_TOKEN + 1], nextMap[MAX_MAP_TOKEN + 1], followingMap[MAX_MAP_TOKEN + 1], style[16]
+    get_mapname(current, charsmax(current))
+    if (!next_mapcycle_pair(current, nextMap, charsmax(nextMap), followingMap, charsmax(followingMap)) || equali(nextMap, current))
+    {
+        log_amx("Persistent PUG could not advance: mapcyclefile has no different installed next map")
+        return false
+    }
+    get_pcvar_string(g_CvarPugStyle, style, charsmax(style)); strtolower(style)
+    if (!equal(style, "random") && !equal(style, "manual")) return false
+
+    clear_pug_resume_state()
+    set_localinfo(LI_PUG_NEXT, nextMap); set_localinfo(LI_PUG_FOLLOWING, followingMap)
+    set_localinfo(LI_PUG_RESUME_STYLE, style)
+    set_localinfo(LI_PUG_RESUME, "1")
+    g_MapChangePending = true
+    remove_task(TASK_PUG_MAP_CHANGE)
+    set_task(8.0, "task_change_pug_map", TASK_PUG_MAP_CHANGE)
+    audit_event("pug_mapcycle_advance_queued")
+    return true
+}
+
+public task_change_pug_map()
+{
+    new active[4], nextMap[MAX_MAP_TOKEN + 1]
+    get_localinfo(LI_PUG_RESUME, active, charsmax(active)); get_localinfo(LI_PUG_NEXT, nextMap, charsmax(nextMap))
+    if (!equal(active, "1") || !valid_map_token(nextMap))
+    {
+        clear_pug_resume_state(); g_MapChangePending = false
+        return
+    }
+    server_cmd("changelevel %s", nextMap)
+}
+
+stock bool:resume_persistent_pug()
+{
+    new active[4], expected[MAX_MAP_TOKEN + 1], following[MAX_MAP_TOKEN + 1], current[MAX_MAP_TOKEN + 1], style[16]
+    get_localinfo(LI_PUG_RESUME, active, charsmax(active))
+    if (!equal(active, "1")) return false
+    get_localinfo(LI_PUG_NEXT, expected, charsmax(expected)); get_localinfo(LI_PUG_FOLLOWING, following, charsmax(following))
+    get_localinfo(LI_PUG_RESUME_STYLE, style, charsmax(style)); get_mapname(current, charsmax(current)); strtolower(style)
+    if (!valid_map_token(expected) || !equali(expected, current) ||
+        (following[0] && (!valid_map_token(following) || equali(expected, following))) ||
+        (!equal(style, "random") && !equal(style, "manual")))
+    {
+        log_amx("Rejected stale or invalid persistent PUG mapcycle state")
+        clear_pug_resume_state()
+        return false
+    }
+    set_pcvar_string(g_CvarMap1, expected); set_pcvar_string(g_CvarMap2, following)
+    set_pcvar_num(g_CvarMapCount, following[0] ? 2 : 1); set_pcvar_string(g_CvarPugStyle, style)
+    g_PugActive = true
+    clear_pug_resume_state()
+    if (!start_warmup(false))
+    {
+        g_PugActive = false
+        return false
+    }
+    audit_event("pug_mapcycle_advanced")
+    return true
+}
+
+stock clear_pug_resume_state()
+{
+    set_localinfo(LI_PUG_RESUME, "")
+    set_localinfo(LI_PUG_NEXT, ""); set_localinfo(LI_PUG_FOLLOWING, ""); set_localinfo(LI_PUG_RESUME_STYLE, "")
 }
 
 stock begin_knife_vote(CsTeams:winner)
@@ -2398,7 +2779,11 @@ stock bool:load_runtime_settings(bool:crossmap)
     get_pcvar_string(g_CvarMap2, g_Map2, charsmax(g_Map2))
     strtolower(g_Map1); strtolower(g_Map2)
     g_MapCount = clamp(get_pcvar_num(g_CvarMapCount), 1, 2)
-    if (!g_Map1[0]) get_mapname(g_Map1, charsmax(g_Map1))
+    if (!g_Map1[0])
+    {
+        get_mapname(g_Map1, charsmax(g_Map1))
+        set_pcvar_string(g_CvarMap1, g_Map1)
+    }
     if (!valid_map_token(g_Map1)) { log_amx("Invalid kgb_cw_map1"); return false; }
     if (g_MapCount == 2 && (!valid_map_token(g_Map2) || equali(g_Map1, g_Map2)))
     {
@@ -2579,10 +2964,12 @@ stock restore_environment()
     log_amx("Restored managed hostname, password (redacted), and shield state")
 }
 
-stock persist_crossmap_state()
+stock bool:persist_crossmap_state()
 {
     new value[32]
-    set_localinfo(LI_ACTIVE, "1"); set_localinfo(LI_MAP, g_Map2)
+    set_localinfo(LI_ACTIVE, "")
+    if (!persist_series_manifest()) return false
+    set_localinfo(LI_MAP, g_Map2)
     num_to_str(g_TeamAScore, value, charsmax(value)); set_localinfo(LI_SCORE_A, value)
     num_to_str(g_TeamBScore, value, charsmax(value)); set_localinfo(LI_SCORE_B, value)
     set_localinfo(LI_MATCH_ID, g_MatchId); set_localinfo(LI_OLD_HOST, g_OldHostname)
@@ -2595,6 +2982,35 @@ stock persist_crossmap_state()
         get_pcvar_string(g_CvarPugStyle, value, charsmax(value)); set_localinfo(LI_PUG_STYLE, value)
     }
     else set_localinfo(LI_PUG_STYLE, "")
+    set_localinfo(LI_LEGACY_RECORD, g_LegacyRecordOverride ? "1" : "0")
+    num_to_str(g_LegacyOldClientDemos, value, charsmax(value)); set_localinfo(LI_LEGACY_CLIENT, value)
+    num_to_str(g_LegacyOldHltvEnabled, value, charsmax(value)); set_localinfo(LI_LEGACY_HLTV_ENABLED, value)
+    num_to_str(g_LegacyOldHltvAuto, value, charsmax(value)); set_localinfo(LI_LEGACY_HLTV_AUTO, value)
+    set_localinfo(LI_ACTIVE, "1")
+    return true
+}
+
+stock bool:restore_crossmap_record_state()
+{
+    new active[4], value[16]
+    get_localinfo(LI_LEGACY_RECORD, active, charsmax(active))
+    if (!equal(active, "0") && !equal(active, "1")) return false
+    if (equal(active, "0"))
+    {
+        g_LegacyRecordOverride = false
+        g_LegacyOldClientDemos = 0; g_LegacyOldHltvEnabled = -1; g_LegacyOldHltvAuto = -1
+        return true
+    }
+    get_localinfo(LI_LEGACY_CLIENT, value, charsmax(value)); if (!equal(value, "0") && !equal(value, "1")) return false
+    g_LegacyOldClientDemos = str_to_num(value)
+    get_localinfo(LI_LEGACY_HLTV_ENABLED, value, charsmax(value));
+    if (!equal(value, "-1") && !equal(value, "0") && !equal(value, "1")) return false
+    g_LegacyOldHltvEnabled = str_to_num(value)
+    get_localinfo(LI_LEGACY_HLTV_AUTO, value, charsmax(value));
+    if (!equal(value, "-1") && !equal(value, "0") && !equal(value, "1")) return false
+    g_LegacyOldHltvAuto = str_to_num(value)
+    g_LegacyRecordOverride = true
+    return true
 }
 
 stock load_env_snapshot()
@@ -2614,11 +3030,14 @@ stock restore_crossmap_environment()
 stock clear_crossmap_state()
 {
     set_localinfo(LI_ACTIVE, ""); set_localinfo(LI_MAP, "")
+    clear_series_manifest_storage()
     set_localinfo(LI_SCORE_A, ""); set_localinfo(LI_SCORE_B, "")
     set_localinfo(LI_MATCH_ID, ""); set_localinfo(LI_OLD_HOST, "")
     set_localinfo(LI_OLD_PASS, ""); set_localinfo(LI_OLD_SHIELD, ""); set_localinfo(LI_ENV_SAVED, "")
     set_localinfo(LI_TEAM_A_SIDE, "")
     set_localinfo(LI_PUG_ACTIVE, ""); set_localinfo(LI_PUG_STYLE, "")
+    set_localinfo(LI_LEGACY_RECORD, ""); set_localinfo(LI_LEGACY_CLIENT, "")
+    set_localinfo(LI_LEGACY_HLTV_ENABLED, ""); set_localinfo(LI_LEGACY_HLTV_AUTO, "")
 }
 
 stock create_match_id() { get_time("%Y%m%d_%H%M%S", g_MatchId, charsmax(g_MatchId)); }
@@ -2827,7 +3246,7 @@ stock cancel_transition_tasks()
 {
     cancel_lo3_tasks(); remove_task(TASK_HALFTIME); remove_task(TASK_WARMUP)
     g_CaptureHalfBaselineAfterLo3 = false; g_ResetTlTimerAfterLo3 = false; g_TimeLimitExpired = false
-    remove_task(TASK_KNIFE_VOTE); remove_task(TASK_OVERTIME_VOTE); remove_task(TASK_PLAYOUT_VOTE); remove_task(TASK_TIME_LIMIT); remove_task(TASK_MAP_CHANGE)
+    remove_task(TASK_KNIFE_VOTE); remove_task(TASK_OVERTIME_VOTE); remove_task(TASK_PLAYOUT_VOTE); remove_task(TASK_TIME_LIMIT); remove_task(TASK_MAP_CHANGE); remove_task(TASK_PUG_MAP_CHANGE)
     for (new id = 1; id <= MAX_PLAYERS; id++) remove_task(TASK_KNIFE_EQUIP + id)
 }
 

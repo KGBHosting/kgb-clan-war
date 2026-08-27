@@ -61,6 +61,10 @@ the core before them in `plugins.ini`.
   not reconstruct a disconnected player's complete history.
 - A series is intentionally limited to one or two installed maps. Map and
   phase-config basenames are validated before they reach server commands.
+- Saved-snapshot replacement is supported on POSIX HLDS/ReHLDS hosts, including
+  the Linux production target. Windows C-runtime rename does not portably
+  replace an existing file; on Windows the plugin leaves the existing snapshot
+  intact and reports a save error instead of deleting it first.
 - This repository proves source review and compiler compatibility. A compiled
   plugin still needs runtime qualification on the target ReHLDS/HLDS build,
   MetaMod, AMX Mod X modules, maps, SQL driver, and HLTV topology.
@@ -196,7 +200,7 @@ The installer creates
 | `kgb_cw_knife_vote_seconds` | `15` | Knife decision timeout. |
 | `kgb_cw_pug_mode` | `0` | Permit PUG randomization. |
 | `kgb_cw_pug_style` | `random` | Default `random` or admin-managed `manual` team workflow. |
-| `kgb_cw_pug_persist` | `1` | Preserve the PUG session across map two and return to warmup after a completed PUG series. |
+| `kgb_cw_pug_persist` | `1` | Preserve the PUG session across a series, then advance to the next installed `mapcyclefile` entry and resume warmup there. |
 | `kgb_cw_allow_menu_save` | `0` | Permit writing the allowlisted, non-secret saved snapshot. |
 | `kgb_cw_set_hostname` | `0` | Opt in to temporary hostname changes. |
 | `kgb_cw_hostname` | empty | Temporary match hostname. |
@@ -225,6 +229,23 @@ kgb_cw_chat_prefix "[MATCH]"
 These settings change presentation only: plugin metadata, authorship, command
 names, CVAR names, artifact names, and the license remain unchanged.
 
+When a live series starts, the core captures a versioned immutable manifest of
+all match-affecting settings: team names/tags, rule and length, ready/swap,
+overtime/playout/screenshot policy, phase configs, one/two-map topology, client
+demo behavior, and HLTV enable/auto-record mode. A two-map changelevel resumes
+only when every manifest field, the match identifier, the expected map, and the
+environment snapshot validate. The active marker is committed last and cleared
+first, so a partial write or stale resume is rejected as a unit. Later CVAR
+edits cannot silently change map two of the running series.
+
+Persistent PUG completion follows the server's `mapcyclefile`: the next valid,
+installed map after the current map becomes map one and the following distinct
+entry becomes map two, wrapping at the end. For command-safety the configured
+mapcycle filename must be a plain `.txt` basename (no directory components);
+blank, commented, invalid, duplicate-current, and uninstalled entries are
+skipped. If no different installed map is available, the plugin stays on the
+current map and returns to warmup without claiming an advance.
+
 `kgb_cw_state` and the three `*_version` CVARs are runtime status values, not
 operator settings. The complete examples are in [`configs/`](configs/).
 The default phase basename resolves to the shipped
@@ -239,15 +260,27 @@ fallback and accepts only a numeric IPv4 destination. Leave
 and the network path is restricted to that proxy.
 
 SQL persistence uses threaded SQLX queries so match writes do not block the
-game loop. It creates the fixed `kgb_cw_*` tables listed in
+game loop. v0.3.0 supports the AMX Mod X MySQL/MariaDB SQLX driver and creates
+the fixed `kgb_cw_*` tables listed in
 [`sql/schema.sql`](sql/schema.sql). Configure a least-privilege database account
 in AMX Mod X `sql.cfg`, then set `kgb_cw_sql_enabled 1`. Player rows include
 Steam authentication IDs, map number, current names, team, kills, deaths, and
 headshots. The `(match_uid, map_number, auth_id)` key preserves map-one totals
-when map two starts and records connected zero-event players on each map. If a
-development server used an older v0.3.0 prerelease schema, drop and recreate
-`kgb_cw_players` before qualification; no public stable release used that
-schema.
+when map two starts and records connected zero-event players on each map.
+Each persistence attempt adds only counters not already queued for that player
+slot; reconnecting with the same SteamID therefore accumulates another session
+into the same map row without replacing earlier totals.
+
+The plugin detects the exact public v0.2.0 player table and upgrades it by
+adding `map_number` (existing rows become map one) and changing the primary key
+to `(match_uid, map_number, auth_id)`. That automated DDL is MySQL/MariaDB-only.
+The SQL account needs the table create/alter and normal read/write privileges
+used by the plugin. Operators who require a reviewed maintenance-window change
+can instead stop the server and run
+[`sql/migrate-v0.2.0-to-v0.3.0.sql`](sql/migrate-v0.2.0-to-v0.3.0.sql) exactly
+once before starting v0.3.0. Other SQLX drivers are not a supported v0.3.0
+configuration.
+
 Operators are responsible for an appropriate notice, lawful basis, access
 control, retention period, and deletion process for that personal data.
 
@@ -261,7 +294,8 @@ presets can only be read below the managed preset directory, and every line is
 prevalidated against the preset allowlist before any setting changes. Maps must
 be installed before they appear in the menu. Saved snapshots are likewise
 prevalidated, applied with rollback on runtime-validation failure, and written
-through a validated temporary file plus an atomic rename. The save workflow
+through a validated temporary file plus a POSIX atomic replacement using the
+documented AMX Mod X mod-directory base. The save workflow
 deliberately excludes `kgb_cw_password`, hostname changes, SQL settings, and
 HLTV RCON credentials.
 
@@ -279,6 +313,11 @@ On plugin unload, a connected proxy is stopped directly; the RCON fallback
 performs one bounded 100 ms authenticated stop exchange and reports an
 active/unknown state rather than claiming success if the proxy does not answer.
 Credentials remain file-only and cannot be entered through the menu or a CVAR.
+The legacy `recdemo`, `rechltv`, and `recboth` launch flags are temporary
+per-series overrides. The original client-demo and HLTV enable/auto-record
+values are restored after normal completion, administrator stop, restart,
+cross-map resume failure, two-map completion, or plugin unload outside a
+managed changelevel.
 
 ## Build and compatibility
 
@@ -292,6 +331,8 @@ first four bytes are not the AMXX `XXMA` magic used by the Panel artifact gate.
 ./scripts/build.sh
 ./scripts/check-source-capabilities.sh
 ./scripts/check-compatibility.sh
+./scripts/test-runtime-regressions.sh
+./scripts/test-sql-migration.sh
 ./scripts/test-install.sh
 ./scripts/package.sh v0.3.0
 ```
@@ -301,8 +342,9 @@ Compatibility checks compile all three plugins against AMX Mod X `1.8.2`,
 compiler, `1.8.2`, so they remain loadable across that supported range; a
 successful compile with a newer compiler does not establish backward binary
 compatibility. Tagged `v*` pushes must match the version declared in every
-source file. The GitHub workflow repeats the matrix, installation tests, and
-checksum verification before creating a release.
+source file. The GitHub workflow repeats the matrix, runtime/filesystem
+regressions, an isolated MariaDB upgrade from the exact public v0.2.0 player
+schema, installation tests, and checksum verification before creating a release.
 
 ## Release assets
 
