@@ -6,7 +6,7 @@
 #include <fun>
 
 #define PLUGIN_NAME "KGB Clan War"
-#define PLUGIN_VERSION "0.1.0"
+#define PLUGIN_VERSION "0.1.1"
 #define PLUGIN_AUTHOR "KGB Hosting"
 
 #define MAX_PLAYERS 32
@@ -375,7 +375,7 @@ public menu_control_handler(id, menu, item)
 
 public menu_knife_vote_handler(id, menu, item)
 {
-    if (item == MENU_EXIT || g_State != STATE_KNIFE_VOTE || g_KnifeVoted[id] || cs_get_user_team(id) != g_KnifeWinningSide)
+    if (item == MENU_EXIT || g_State != STATE_KNIFE_VOTE || g_KnifeDecisionMade || g_KnifeVoted[id] || cs_get_user_team(id) != g_KnifeWinningSide)
     {
         menu_destroy(menu)
         return PLUGIN_HANDLED
@@ -542,7 +542,7 @@ stock start_knife_round()
         return
     }
     close_active_lifecycle("knife_match_stop")
-    cancel_transition_tasks(); reset_match_data(true); reset_ready_players()
+    cancel_transition_tasks(); reset_match_data(true); reset_ready_players(); g_KnifeDecisionMade = false
     load_runtime_settings(false)
     snapshot_environment(); apply_environment(false); set_cw_state(STATE_KNIFE)
     execute_phase_config(g_CvarWarmupConfig, "warmup")
@@ -828,8 +828,9 @@ stock show_knife_vote_menu(id)
 
 stock finish_knife_vote()
 {
-    if (g_State != STATE_KNIFE_VOTE) return
+    if (g_State != STATE_KNIFE_VOTE || g_KnifeDecisionMade) return
     remove_task(TASK_KNIFE_VOTE)
+    g_KnifeDecisionMade = true
     if (g_KnifeSwapVotes > g_KnifeStayVotes)
     {
         swap_players(); toggle_team_a_side(); announce("Knife vote: swap (%d-%d).", g_KnifeSwapVotes, g_KnifeStayVotes); audit_event("knife_vote_swap")
@@ -838,7 +839,7 @@ stock finish_knife_vote()
     {
         announce("Knife vote: stay (%d-%d). Ties stay.", g_KnifeStayVotes, g_KnifeSwapVotes); audit_event("knife_vote_stay")
     }
-    g_KnifeDecisionMade = true; set_task(3.0, "task_return_to_warmup", TASK_WARMUP)
+    set_task(3.0, "task_return_to_warmup", TASK_WARMUP)
 }
 
 stock knife_eligible_count()

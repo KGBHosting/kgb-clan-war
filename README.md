@@ -190,7 +190,7 @@ first four bytes are not the AMXX `XXMA` magic used by the Panel artifact gate.
 ./scripts/check-source-capabilities.sh
 ./scripts/check-compatibility.sh
 ./scripts/test-install.sh
-./scripts/package.sh v0.1.0
+./scripts/package.sh v0.1.1
 ```
 
 Compatibility checks compile all three plugins against AMX Mod X `1.8.2`,
@@ -206,7 +206,7 @@ checksum verification before creating a release.
 - `kgb_clan_war.amxx` and `kgb_clan_war.amxx.sha256`
 - `kgb_clan_war_hltv.amxx` and `kgb_clan_war_hltv.amxx.sha256`
 - `kgb_clan_war_sql.amxx` and `kgb_clan_war_sql.amxx.sha256`
-- `kgb-clan-war-v0.1.0.zip` and `kgb-clan-war-v0.1.0.zip.sha256`
+- `kgb-clan-war-v0.1.1.zip` and `kgb-clan-war-v0.1.1.zip.sha256`
 
 The ZIP is the convenience distribution: binaries, checksums, safe config
 examples, corresponding source, build/install scripts, license, and security
