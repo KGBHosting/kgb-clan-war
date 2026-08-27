@@ -1394,6 +1394,6 @@ stock announce(const format[], any:...)
     if (get_pcvar_num(g_CvarHudAnnouncements))
     {
         set_hudmessage(0, 180, 255, -1.0, 0.18, 0, 1.0, 4.0, 0.1, 0.2, -1)
-        show_hudmessage(0, "%s", message)
+        show_hudmessage(0, "%s %s", g_ChatPrefix, message)
     }
 }

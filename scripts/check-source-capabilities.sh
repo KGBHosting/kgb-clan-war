@@ -62,13 +62,20 @@ require_string "$CORE" 'copy(g_ChatPrefix, charsmax(g_ChatPrefix), DEFAULT_CHAT_
 require_string "$CORE" 'new menu = menu_create(g_DisplayName, "menu_control_handler")'
 require_string "$CORE" 'formatex(title, charsmax(title), "%s: choose side", g_DisplayName)'
 require_string "$CORE" 'new menu = menu_create(title, "menu_knife_vote_handler")'
+require_string "$CORE" 'show_hudmessage(0, "%s %s", g_ChatPrefix, message)'
 require_string "$CORE_CONFIG" 'kgb_cw_display_name "KGB Clan War"'
 require_string "$CORE_CONFIG" 'kgb_cw_chat_prefix "[KGB CW]"'
+require_string "$README" '`v0.2.0` is the next qualification candidate.'
 require_string "$README" 'KGB Hosting may install, run, modify, and redistribute it'
 require_string "$README" 'does not grant trademark rights'
 
 if grep -Eq 'client_print.*"\[KGB CW\]|console_print.*"\[KGB CW\]|menu_create\("' "$CORE"; then
 	printf 'Hardcoded customer-visible core branding bypasses the validated CVARs.\n' >&2
+	exit 1
+fi
+
+if grep -Fq 'show_hudmessage(0, "%s", message)' "$CORE"; then
+	printf 'HUD announcements bypass the validated branding CVARs.\n' >&2
 	exit 1
 fi
 

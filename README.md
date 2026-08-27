@@ -10,10 +10,11 @@ credentials nor a database.
 
 ## Release policy
 
-`v0.2.0` is the current qualification release. The earlier stable-version
-candidate was withdrawn when configurable operator branding was added; do not
-deploy that candidate. Promote `v0.2.0` only after its CI and
-development-server qualification evidence is complete.
+`v0.2.0` is the next qualification candidate. It is not a release until the
+tagged release workflow completes. The earlier stable-version candidate was
+withdrawn when configurable operator branding was added; do not deploy that
+candidate. Promote `v0.2.0` only after its CI and development-server
+qualification evidence is complete.
 
 The qualification line includes the practical AMX Match Deluxe feature
 set: player/team/admin ready modes; max-round, win-limit, and time-limit
@@ -128,7 +129,7 @@ The installer creates
 | --- | --- | --- |
 | `kgb_cw_enabled` | `1` | Enable core controls. |
 | `kgb_cw_display_name` | `KGB Clan War` | In-game control and knife-vote menu branding. |
-| `kgb_cw_chat_prefix` | `[KGB CW]` | Prefix for core chat, command feedback, score/status, and server announcements. |
+| `kgb_cw_chat_prefix` | `[KGB CW]` | Prefix for core chat, HUD, command feedback, score/status, and server announcements. |
 | `kgb_cw_min_ready` | `10` | Required ready players. |
 | `kgb_cw_ready_mode` | `player` | `player`, `team`, or `admin`. |
 | `kgb_cw_auto_live` | `0` | Automatically start after readiness. |
