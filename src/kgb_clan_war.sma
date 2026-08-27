@@ -834,7 +834,10 @@ stock begin_knife_vote(CsTeams:winner)
 
 stock show_knife_vote_menu(id)
 {
-    new menu = menu_create("Knife winner: choose side", "menu_knife_vote_handler")
+    new title[64]
+    refresh_branding(false)
+    formatex(title, charsmax(title), "%s: choose side", g_DisplayName)
+    new menu = menu_create(title, "menu_knife_vote_handler")
     menu_additem(menu, "Stay", "1"); menu_additem(menu, "Swap", "2")
     menu_setprop(menu, MPROP_EXIT, MEXIT_NEVER); menu_display(id, menu)
 }

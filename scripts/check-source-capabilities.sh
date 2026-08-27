@@ -60,12 +60,14 @@ require_string "$CORE" 'valid_display_token(value, MAX_CHAT_PREFIX)'
 require_string "$CORE" 'copy(g_DisplayName, charsmax(g_DisplayName), DEFAULT_DISPLAY_NAME)'
 require_string "$CORE" 'copy(g_ChatPrefix, charsmax(g_ChatPrefix), DEFAULT_CHAT_PREFIX)'
 require_string "$CORE" 'new menu = menu_create(g_DisplayName, "menu_control_handler")'
+require_string "$CORE" 'formatex(title, charsmax(title), "%s: choose side", g_DisplayName)'
+require_string "$CORE" 'new menu = menu_create(title, "menu_knife_vote_handler")'
 require_string "$CORE_CONFIG" 'kgb_cw_display_name "KGB Clan War"'
 require_string "$CORE_CONFIG" 'kgb_cw_chat_prefix "[KGB CW]"'
 require_string "$README" 'KGB Hosting may install, run, modify, and redistribute it'
 require_string "$README" 'does not grant trademark rights'
 
-if grep -Eq 'client_print.*"\[KGB CW\]|console_print.*"\[KGB CW\]|menu_create\("KGB Clan War"' "$CORE"; then
+if grep -Eq 'client_print.*"\[KGB CW\]|console_print.*"\[KGB CW\]|menu_create\("' "$CORE"; then
 	printf 'Hardcoded customer-visible core branding bypasses the validated CVARs.\n' >&2
 	exit 1
 fi

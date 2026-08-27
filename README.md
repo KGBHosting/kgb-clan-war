@@ -127,7 +127,7 @@ The installer creates
 | CVAR | Default | Meaning |
 | --- | --- | --- |
 | `kgb_cw_enabled` | `1` | Enable core controls. |
-| `kgb_cw_display_name` | `KGB Clan War` | In-game control-menu title. |
+| `kgb_cw_display_name` | `KGB Clan War` | In-game control and knife-vote menu branding. |
 | `kgb_cw_chat_prefix` | `[KGB CW]` | Prefix for core chat, command feedback, score/status, and server announcements. |
 | `kgb_cw_min_ready` | `10` | Required ready players. |
 | `kgb_cw_ready_mode` | `player` | `player`, `team`, or `admin`. |
