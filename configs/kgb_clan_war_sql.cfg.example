@@ -1,4 +1,6 @@
 ; Optional KGB Clan War SQL statistics integration.
+; v0.3.0 queries and the automatic public-v0.2.0 schema upgrade support the
+; AMX Mod X MySQL/MariaDB SQLX driver. Other SQLX drivers are not supported.
 ; Disabled by default. Connection credentials are read from the standard
 ; addons/amxmodx/configs/sql.cfg managed by AMX Mod X; they do not belong here.
 kgb_cw_sql_enabled 0

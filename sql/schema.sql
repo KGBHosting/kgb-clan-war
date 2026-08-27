@@ -1,4 +1,4 @@
--- KGB Clan War optional SQLX persistence schema.
+-- KGB Clan War optional MySQL/MariaDB SQLX persistence schema.
 -- The plugin creates these tables automatically when kgb_cw_sql_enabled is 1.
 -- It uses the connection selected by AMX Mod X's standard sql.cfg.
 
@@ -38,8 +38,11 @@ CREATE TABLE IF NOT EXISTS kgb_cw_halves (
     PRIMARY KEY (match_uid, map_number, half, event_type)
 );
 
+-- Player totals are map-scoped so a two-map series cannot overwrite map one
+-- and a connected player with zero events on map two still has a map-two row.
 CREATE TABLE IF NOT EXISTS kgb_cw_players (
     match_uid VARCHAR(64) NOT NULL,
+    map_number INTEGER NOT NULL,
     auth_id VARCHAR(40) NOT NULL,
     player_name VARCHAR(64) NOT NULL,
     last_team VARCHAR(16) NOT NULL,
@@ -47,5 +50,5 @@ CREATE TABLE IF NOT EXISTS kgb_cw_players (
     deaths INTEGER NOT NULL DEFAULT 0,
     headshots INTEGER NOT NULL DEFAULT 0,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (match_uid, auth_id)
+    PRIMARY KEY (match_uid, map_number, auth_id)
 );

@@ -46,18 +46,29 @@ jobs:
   build:
     name: Build release assets
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     needs: compatibility
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Compile release plugins
+      - name: Reproduce release from two clean builds
         env:
           # Oldest supported compiler produces the widest-loadable release.
           AMXX_VERSION: "1.8.2"
-        run: ./scripts/build.sh
+        run: |
+          package_version="$GITHUB_SHA"
+          case "$GITHUB_REF" in
+            refs/tags/v*) package_version="$GITHUB_REF_NAME" ;;
+          esac
+          ./scripts/test-build-reproducibility.sh "$package_version"
+
+      - name: Test runtime state and filesystem regressions
+        run: ./scripts/test-runtime-regressions.sh
+
+      - name: Test public v0.2.0 SQL migration
+        run: ./scripts/test-sql-migration.sh
 
       - name: Test idempotent safe installation
         run: ./scripts/test-install.sh
@@ -68,7 +79,6 @@ jobs:
           case "$GITHUB_REF" in
             refs/tags/v*) package_version="$GITHUB_REF_NAME" ;;
           esac
-          ./scripts/package.sh "$package_version"
           mkdir -p release-assets
           cp compiled/kgb_clan_war.amxx compiled/kgb_clan_war.amxx.sha256 release-assets/
           cp compiled/kgb_clan_war_hltv.amxx compiled/kgb_clan_war_hltv.amxx.sha256 release-assets/

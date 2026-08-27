@@ -14,13 +14,28 @@ kgb_cw_format "mr"
 kgb_cw_half_rounds 15
 kgb_cw_win_rounds 16
 kgb_cw_time_limit_minutes 20
+; 0 = end when clinched, 1 = always play all regulation rounds,
+; 2 = ask active players when the result is clinched.
 kgb_cw_playout 0
+; Tied/no-vote playout decision: 1 continues, 0 ends the match.
+kgb_cw_playout_vote_default 1
+; Finish the active round after a time-limit half expires. Set 0 for an
+; immediate half transition.
+kgb_cw_time_limit_finish_round 1
 kgb_cw_overtime 1
 ; Set to 0 only when deliberately allowing unlimited overtime cycles.
 kgb_cw_overtime_max_cycles 3
 kgb_cw_overtime_half_rounds 3
 kgb_cw_overtime_money 10000
+; When enabled, connected players vote to play overtime or accept the draw.
+; A tied/no-vote result uses kgb_cw_overtime_vote_default.
+kgb_cw_overtime_vote 0
+kgb_cw_overtime_vote_seconds 15
+kgb_cw_overtime_vote_default 1
 kgb_cw_hud_announcements 1
+; Recurring ready/score HUD when HUD announcements are enabled. Set 0 to
+; disable; otherwise clamped to 3-60 sec.
+kgb_cw_hud_interval 10
 
 ; Team and series metadata.
 kgb_cw_team_a_name "Team A"
@@ -38,9 +53,20 @@ kgb_cw_match_config "kgb_gamemode"
 kgb_cw_overtime_config "kgb_gamemode"
 kgb_cw_default_config "kgb_gamemode"
 kgb_cw_halftime_delay 5
+kgb_cw_second_half_ready 0
+; halves = automatic side swaps, off = teams retain their sides.
+kgb_cw_swap_policy "halves"
 kgb_cw_knife_vote 1
 kgb_cw_knife_vote_seconds 15
 kgb_cw_pug_mode 0
+kgb_cw_pug_style "random"
+; Keep an active PUG session across map changes. After a completed series, the
+; plugin advances to the next installed entry in the server's mapcyclefile and
+; resumes PUG warmup there.
+kgb_cw_pug_persist 1
+; Allows the admin menu to write only a non-secret, allowlisted snapshot to
+; addons/amxmodx/configs/kgb_clan_war_saved.cfg.
+kgb_cw_allow_menu_save 0
 
 ; Risky, access-changing, or client-affecting features are opt-in.
 kgb_cw_set_hostname 0
@@ -50,4 +76,11 @@ kgb_cw_password ""
 kgb_cw_disable_shield 0
 kgb_cw_client_demos 0
 kgb_cw_screenshots 0
-kgb_cw_file_stats 1
+; Explicit admin-only score/SteamID MOTD plus screenshot workflow.
+kgb_cw_scoreid_screenshots 0
+; Apply the configured score and identity screenshot workflows to an
+; administrator-requested match stop as well as normal half/match endings.
+kgb_cw_screenshot_on_stop 0
+; Opt in to local files containing player names, SteamIDs, user IDs, teams,
+; and score statistics. Configure access, retention, and deletion first.
+kgb_cw_file_stats 0

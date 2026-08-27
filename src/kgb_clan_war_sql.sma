@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <amxmodx>
+#include <celltrie>
 #include <sqlx>
 
 #define PLUGIN_NAME "KGB Clan War: SQL"
-#define PLUGIN_VERSION "0.2.0"
+#define PLUGIN_VERSION "0.3.0"
 #define PLUGIN_AUTHOR "KGB Hosting"
 
 #define EVENT_QUEUE_MAX 16
@@ -13,6 +14,13 @@
 #define MATCH_UID_MAX 63
 #define QUERY_MAX 1535
 #define TASK_VALIDATE_CROSSMAP 88501
+#define PLAYER_WRITE_MAX 64
+#define PLAYER_WRITE_RETRY_MAX 3
+#define TASK_PLAYER_WRITE_RETRY 88600
+
+new const PLAYER_SCHEMA_V02[] = "match_uid:varchar:64:NO:<NULL>:|auth_id:varchar:40:NO:<NULL>:|player_name:varchar:64:NO:<NULL>:|last_team:varchar:16:NO:<NULL>:|kills:int::NO:0:|deaths:int::NO:0:|headshots:int::NO:0:|updated_at:timestamp::NO:current_timestamp:"
+new const PLAYER_SCHEMA_V03_FRESH[] = "match_uid:varchar:64:NO:<NULL>:|map_number:int::NO:<NULL>:|auth_id:varchar:40:NO:<NULL>:|player_name:varchar:64:NO:<NULL>:|last_team:varchar:16:NO:<NULL>:|kills:int::NO:0:|deaths:int::NO:0:|headshots:int::NO:0:|updated_at:timestamp::NO:current_timestamp:"
+new const PLAYER_SCHEMA_V03_MIGRATED[] = "match_uid:varchar:64:NO:<NULL>:|map_number:int::NO:1:|auth_id:varchar:40:NO:<NULL>:|player_name:varchar:64:NO:<NULL>:|last_team:varchar:16:NO:<NULL>:|kills:int::NO:0:|deaths:int::NO:0:|headshots:int::NO:0:|updated_at:timestamp::NO:current_timestamp:"
 
 #define LI_CORE_ACTIVE "_kgbcw_active"
 #define LI_CORE_MAP "_kgbcw_map"
@@ -51,6 +59,42 @@ new g_PlayerTeam[33][16]
 new g_PlayerKills[33]
 new g_PlayerDeaths[33]
 new g_PlayerHeadshots[33]
+new g_PlayerPersistedKills[33]
+new g_PlayerPersistedDeaths[33]
+new g_PlayerPersistedHeadshots[33]
+new g_PlayerBaseKills[33]
+new g_PlayerBaseDeaths[33]
+new g_PlayerBaseHeadshots[33]
+new g_PlayerSession[33]
+new g_PlayerPendingWrite[33]
+new bool:g_PlayerIdentityLoaded[33]
+new bool:g_PlayerRowAcknowledged[33]
+new bool:g_PlayerDepartureHandled[33]
+new Trie:g_IdentityCache = Invalid_Trie
+
+new bool:g_WriteUsed[PLAYER_WRITE_MAX]
+new g_WritePlayer[PLAYER_WRITE_MAX]
+new g_WriteSession[PLAYER_WRITE_MAX]
+new g_WriteMap[PLAYER_WRITE_MAX]
+new g_WriteAttempts[PLAYER_WRITE_MAX]
+new g_WriteKills[PLAYER_WRITE_MAX]
+new g_WriteDeaths[PLAYER_WRITE_MAX]
+new g_WriteHeadshots[PLAYER_WRITE_MAX]
+new g_WriteSessionKills[PLAYER_WRITE_MAX]
+new g_WriteSessionDeaths[PLAYER_WRITE_MAX]
+new g_WriteSessionHeadshots[PLAYER_WRITE_MAX]
+new g_WriteUid[PLAYER_WRITE_MAX][MATCH_UID_MAX + 1]
+new g_WriteAuth[PLAYER_WRITE_MAX][40]
+new g_WriteName[PLAYER_WRITE_MAX][64]
+new g_WriteTeam[PLAYER_WRITE_MAX][16]
+
+#define ID_OBSERVED_KILLS 0
+#define ID_OBSERVED_DEATHS 1
+#define ID_OBSERVED_HEADSHOTS 2
+#define ID_ACK_KILLS 3
+#define ID_ACK_DEATHS 4
+#define ID_ACK_HEADSHOTS 5
+#define PLAYER_IDENTITY_FIELDS 6
 
 public plugin_init()
 {
@@ -59,6 +103,8 @@ public plugin_init()
     g_CvarEnabled = register_cvar("kgb_cw_sql_enabled", "0")
 
     register_event("DeathMsg", "event_player_death", "a")
+    g_IdentityCache = TrieCreate()
+    reset_all_players()
 }
 
 public plugin_cfg()
@@ -75,6 +121,7 @@ public plugin_cfg()
 
 public plugin_end()
 {
+    if (g_IdentityCache != Invalid_Trie) TrieDestroy(g_IdentityCache)
     if (g_DbTuple != Empty_Handle)
     {
         SQL_FreeHandle(g_DbTuple)
@@ -84,6 +131,7 @@ public plugin_end()
 
 public client_authorized(id)
 {
+    g_PlayerDepartureHandled[id] = false
     reset_player(id)
     refresh_player_identity(id)
 }
@@ -96,11 +144,17 @@ public client_infochanged(id)
     }
 }
 
-public client_disconnect(id)
+public client_disconnect(id) { handle_player_departure(id); }
+public client_disconnected(id) { handle_player_departure(id); }
+
+stock handle_player_departure(id)
 {
+    if (g_PlayerDepartureHandled[id]) return
+    g_PlayerDepartureHandled[id] = true
     if (g_MatchActive)
     {
-        persist_player(id)
+        persist_player(id, true)
+        archive_player_identity(id)
     }
 
     reset_player(id)
@@ -186,11 +240,86 @@ public query_schema_result(failState, Handle:query, error[], errorNumber, data[]
         return
     }
 
-    if (g_SchemaQueriesPending > 0)
-    {
-        g_SchemaQueriesPending--
-    }
+    schema_step_complete()
+}
 
+public query_player_table_ready(failState, Handle:query, error[], errorNumber, data[], dataSize, Float:queueTime)
+{
+    if (failState != TQUERY_SUCCESS)
+    {
+        database_query_failed("player schema create", error, errorNumber)
+        return
+    }
+    new probe[1024]
+    copy(probe, charsmax(probe), "SELECT (SELECT GROUP_CONCAT(CONCAT(COLUMN_NAME,':',DATA_TYPE,':',COALESCE(CHARACTER_MAXIMUM_LENGTH,''),':',IS_NULLABLE,':',IF(COLUMN_DEFAULT IS NULL,'<NULL>',REPLACE(LOWER(COLUMN_DEFAULT),'()','')),':',EXTRA) ORDER BY ORDINAL_POSITION SEPARATOR '|') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='kgb_cw_players'),")
+    add(probe, charsmax(probe), "(SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',') FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='kgb_cw_players' AND INDEX_NAME='PRIMARY')")
+    SQL_ThreadQuery(g_DbTuple, "query_player_schema_probe", probe)
+}
+
+public query_player_schema_probe(failState, Handle:query, error[], errorNumber, data[], dataSize, Float:queueTime)
+{
+    if (failState != TQUERY_SUCCESS)
+    {
+        database_query_failed("player schema probe", error, errorNumber)
+        return
+    }
+    new schema[640], primary[96]
+    if (SQL_NumResults(query) > 0)
+    {
+        SQL_ReadResult(query, 0, schema, charsmax(schema))
+        SQL_ReadResult(query, 1, primary, charsmax(primary))
+    }
+    if ((equal(schema, PLAYER_SCHEMA_V03_FRESH) || equal(schema, PLAYER_SCHEMA_V03_MIGRATED)) &&
+        equal(primary, "match_uid,map_number,auth_id"))
+    {
+        schema_step_complete()
+        return
+    }
+    if (equal(schema, PLAYER_SCHEMA_V02) && equal(primary, "match_uid,auth_id"))
+    {
+        SQL_ThreadQuery(g_DbTuple, "query_player_column_added", "ALTER TABLE kgb_cw_players ADD COLUMN map_number INTEGER NOT NULL DEFAULT 1 AFTER match_uid")
+        return
+    }
+    if (equal(schema, PLAYER_SCHEMA_V03_MIGRATED) && equal(primary, "match_uid,auth_id"))
+    {
+        SQL_ThreadQuery(g_DbTuple, "query_player_schema_migrated", "ALTER TABLE kgb_cw_players DROP PRIMARY KEY, ADD PRIMARY KEY (match_uid,map_number,auth_id)")
+        return
+    }
+    reject_player_schema(schema, primary)
+}
+
+public query_player_column_added(failState, Handle:query, error[], errorNumber, data[], dataSize, Float:queueTime)
+{
+    if (failState != TQUERY_SUCCESS)
+    {
+        database_query_failed("player schema map column", error, errorNumber)
+        return
+    }
+    SQL_ThreadQuery(g_DbTuple, "query_player_schema_migrated", "ALTER TABLE kgb_cw_players DROP PRIMARY KEY, ADD PRIMARY KEY (match_uid,map_number,auth_id)")
+}
+
+public query_player_schema_migrated(failState, Handle:query, error[], errorNumber, data[], dataSize, Float:queueTime)
+{
+    if (failState != TQUERY_SUCCESS)
+    {
+        database_query_failed("player schema primary key", error, errorNumber)
+        return
+    }
+    server_print("[KGB CW SQL] Migrated the v0.2.0 player table to map-scoped rows.")
+    schema_step_complete()
+}
+
+stock reject_player_schema(const schema[], const primary[])
+{
+    server_print("[KGB CW SQL] Refused automatic player-table migration: schema or primary key is not an exact supported v0.2.0/v0.3.0 state.")
+    log_amx("Rejected kgb_cw_players schema signature=%s primary=%s", schema, primary)
+    g_DatabaseFailed = true
+    g_SchemaReady = false
+}
+
+stock schema_step_complete()
+{
+    if (g_SchemaQueriesPending > 0) g_SchemaQueriesPending--
     if (!g_SchemaQueriesPending && !g_DatabaseFailed)
     {
         g_SchemaReady = true
@@ -244,11 +373,11 @@ stock initialize_database()
     add(schemaQuery, charsmax(schemaQuery), "PRIMARY KEY (match_uid,map_number,half,event_type))")
     threaded_schema_query(schemaQuery)
 
-    copy(schemaQuery, charsmax(schemaQuery), "CREATE TABLE IF NOT EXISTS kgb_cw_players (match_uid VARCHAR(64) NOT NULL,auth_id VARCHAR(40) NOT NULL,")
+    copy(schemaQuery, charsmax(schemaQuery), "CREATE TABLE IF NOT EXISTS kgb_cw_players (match_uid VARCHAR(64) NOT NULL,map_number INTEGER NOT NULL,auth_id VARCHAR(40) NOT NULL,")
     add(schemaQuery, charsmax(schemaQuery), "player_name VARCHAR(64) NOT NULL,last_team VARCHAR(16) NOT NULL,kills INTEGER NOT NULL DEFAULT 0,")
     add(schemaQuery, charsmax(schemaQuery), "deaths INTEGER NOT NULL DEFAULT 0,headshots INTEGER NOT NULL DEFAULT 0,updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,")
-    add(schemaQuery, charsmax(schemaQuery), "PRIMARY KEY (match_uid,auth_id))")
-    threaded_schema_query(schemaQuery)
+    add(schemaQuery, charsmax(schemaQuery), "PRIMARY KEY (match_uid,map_number,auth_id))")
+    SQL_ThreadQuery(g_DbTuple, "query_player_table_ready", schemaQuery)
 }
 
 stock threaded_schema_query(const statement[])
@@ -297,6 +426,7 @@ stock persist_lifecycle_event(const event[], const teamA[], const teamB[], mapNu
 
 stock begin_match(const teamA[], const teamB[], mapNumber, half, scoreA, scoreB)
 {
+    if (g_IdentityCache != Invalid_Trie) TrieClear(g_IdentityCache)
     generate_match_uid(g_MatchUid, charsmax(g_MatchUid))
     copy(g_MatchTeamA, charsmax(g_MatchTeamA), teamA)
     copy(g_MatchTeamB, charsmax(g_MatchTeamB), teamB)
@@ -423,33 +553,157 @@ stock persist_half(const event[])
     run_write_query(query)
 }
 
-stock persist_player(id)
+stock persist_player(id, bool:allowOverlap = false)
 {
-    if (!g_MatchUid[0] || id < 1 || id > 32 || !g_PlayerAuth[id][0])
+    if (!g_MatchUid[0] || id < 1 || id > 32 || !g_PlayerAuth[id][0] ||
+        g_DbTuple == Empty_Handle || !g_SchemaReady || g_DatabaseFailed) return
+
+    load_player_identity(id)
+    new totalKills = g_PlayerBaseKills[id] + g_PlayerKills[id]
+    new totalDeaths = g_PlayerBaseDeaths[id] + g_PlayerDeaths[id]
+    new totalHeadshots = g_PlayerBaseHeadshots[id] + g_PlayerHeadshots[id]
+    if (g_PlayerPendingWrite[id] >= 0)
     {
+        new pending = g_PlayerPendingWrite[id]
+        if (!allowOverlap || (g_WriteUsed[pending] && g_WriteKills[pending] >= totalKills &&
+            g_WriteDeaths[pending] >= totalDeaths && g_WriteHeadshots[pending] >= totalHeadshots)) return
+    }
+    if (g_PlayerRowAcknowledged[id] && g_PlayerPersistedKills[id] >= g_PlayerKills[id] &&
+        g_PlayerPersistedDeaths[id] >= g_PlayerDeaths[id] && g_PlayerPersistedHeadshots[id] >= g_PlayerHeadshots[id]) return
+
+    new operation = allocate_player_write()
+    if (operation < 0)
+    {
+        server_print("[KGB CW SQL] Player write queue is full; counters remain unacknowledged for a later retry.")
         return
     }
+    g_WritePlayer[operation] = id
+    g_WriteSession[operation] = g_PlayerSession[id]
+    g_WriteMap[operation] = g_CurrentMapNumber
+    g_WriteAttempts[operation] = 0
+    g_WriteKills[operation] = totalKills
+    g_WriteDeaths[operation] = totalDeaths
+    g_WriteHeadshots[operation] = totalHeadshots
+    g_WriteSessionKills[operation] = g_PlayerKills[id]
+    g_WriteSessionDeaths[operation] = g_PlayerDeaths[id]
+    g_WriteSessionHeadshots[operation] = g_PlayerHeadshots[id]
+    copy(g_WriteUid[operation], charsmax(g_WriteUid[]), g_MatchUid)
+    copy(g_WriteAuth[operation], charsmax(g_WriteAuth[]), g_PlayerAuth[id])
+    copy(g_WriteName[operation], charsmax(g_WriteName[]), g_PlayerName[id])
+    copy(g_WriteTeam[operation], charsmax(g_WriteTeam[]), g_PlayerTeam[id])
+    g_PlayerPendingWrite[id] = operation
+    queue_player_write(operation)
+}
 
+stock allocate_player_write()
+{
+    for (new operation = 0; operation < PLAYER_WRITE_MAX; operation++)
+    {
+        if (g_WriteUsed[operation]) continue
+        g_WriteUsed[operation] = true
+        return operation
+    }
+    return -1
+}
+
+stock queue_player_write(operation)
+{
+    if (operation < 0 || operation >= PLAYER_WRITE_MAX || !g_WriteUsed[operation]) return
     new uid[129], authId[81], playerName[129], team[33]
-    quote_sql(g_MatchUid, uid, charsmax(uid))
-    quote_sql(g_PlayerAuth[id], authId, charsmax(authId))
-    quote_sql(g_PlayerName[id], playerName, charsmax(playerName))
-    quote_sql(g_PlayerTeam[id], team, charsmax(team))
-
-    new query[QUERY_MAX + 1]
+    quote_sql(g_WriteUid[operation], uid, charsmax(uid))
+    quote_sql(g_WriteAuth[operation], authId, charsmax(authId))
+    quote_sql(g_WriteName[operation], playerName, charsmax(playerName))
+    quote_sql(g_WriteTeam[operation], team, charsmax(team))
+    new query[QUERY_MAX + 1], data[1]
     formatex(
         query,
         charsmax(query),
-        "REPLACE INTO kgb_cw_players (match_uid,auth_id,player_name,last_team,kills,deaths,headshots,updated_at) VALUES ('%s','%s','%s','%s',%d,%d,%d,CURRENT_TIMESTAMP)",
+        "INSERT INTO kgb_cw_players (match_uid,map_number,auth_id,player_name,last_team,kills,deaths,headshots,updated_at) VALUES ('%s',%d,'%s','%s','%s',%d,%d,%d,CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE player_name=VALUES(player_name),last_team=VALUES(last_team),kills=GREATEST(kills,VALUES(kills)),deaths=GREATEST(deaths,VALUES(deaths)),headshots=GREATEST(headshots,VALUES(headshots)),updated_at=CURRENT_TIMESTAMP",
         uid,
+        g_WriteMap[operation],
         authId,
         playerName,
         team,
-        g_PlayerKills[id],
-        g_PlayerDeaths[id],
-        g_PlayerHeadshots[id]
+        g_WriteKills[operation],
+        g_WriteDeaths[operation],
+        g_WriteHeadshots[operation]
     )
-    run_write_query(query)
+    data[0] = operation
+    SQL_ThreadQuery(g_DbTuple, "query_player_write", query, data, sizeof data)
+}
+
+public query_player_write(failState, Handle:query, error[], errorNumber, data[], dataSize, Float:queueTime)
+{
+    new operation = data[0]
+    if (operation < 0 || operation >= PLAYER_WRITE_MAX || !g_WriteUsed[operation]) return
+    if (failState != TQUERY_SUCCESS)
+    {
+        g_WriteAttempts[operation]++
+        if (g_WriteAttempts[operation] < PLAYER_WRITE_RETRY_MAX && !g_DatabaseFailed)
+        {
+            server_print("[KGB CW SQL] Player write failed transiently (error %d); retry %d/%d is queued.", errorNumber, g_WriteAttempts[operation], PLAYER_WRITE_RETRY_MAX - 1)
+            remove_task(TASK_PLAYER_WRITE_RETRY + operation)
+            set_task(0.25, "task_retry_player_write", TASK_PLAYER_WRITE_RETRY + operation)
+            return
+        }
+        new player = g_WritePlayer[operation]
+        if (player >= 1 && player <= 32 && g_PlayerPendingWrite[player] == operation) g_PlayerPendingWrite[player] = -1
+        release_player_write(operation)
+        database_query_failed("player write", error, errorNumber)
+        return
+    }
+
+    acknowledge_player_write(operation)
+}
+
+public task_retry_player_write(taskId)
+{
+    new operation = taskId - TASK_PLAYER_WRITE_RETRY
+    if (operation < 0 || operation >= PLAYER_WRITE_MAX || !g_WriteUsed[operation]) return
+    if (g_DbTuple == Empty_Handle || !g_SchemaReady || g_DatabaseFailed)
+    {
+        new player = g_WritePlayer[operation]
+        if (player >= 1 && player <= 32 && g_PlayerPendingWrite[player] == operation) g_PlayerPendingWrite[player] = -1
+        release_player_write(operation)
+        return
+    }
+    queue_player_write(operation)
+}
+
+stock acknowledge_player_write(operation)
+{
+    new key[112], identity[PLAYER_IDENTITY_FIELDS]
+    player_identity_key(g_WriteUid[operation], g_WriteMap[operation], g_WriteAuth[operation], key, charsmax(key))
+    TrieGetArray(g_IdentityCache, key, identity, sizeof identity)
+    identity[ID_OBSERVED_KILLS] = max(identity[ID_OBSERVED_KILLS], g_WriteKills[operation])
+    identity[ID_OBSERVED_DEATHS] = max(identity[ID_OBSERVED_DEATHS], g_WriteDeaths[operation])
+    identity[ID_OBSERVED_HEADSHOTS] = max(identity[ID_OBSERVED_HEADSHOTS], g_WriteHeadshots[operation])
+    identity[ID_ACK_KILLS] = max(identity[ID_ACK_KILLS], g_WriteKills[operation])
+    identity[ID_ACK_DEATHS] = max(identity[ID_ACK_DEATHS], g_WriteDeaths[operation])
+    identity[ID_ACK_HEADSHOTS] = max(identity[ID_ACK_HEADSHOTS], g_WriteHeadshots[operation])
+    TrieSetArray(g_IdentityCache, key, identity, sizeof identity)
+    new player = g_WritePlayer[operation]
+    if (player >= 1 && player <= 32 && g_PlayerSession[player] == g_WriteSession[operation] &&
+        equal(g_PlayerAuth[player], g_WriteAuth[operation]) && equal(g_MatchUid, g_WriteUid[operation]) &&
+        g_CurrentMapNumber == g_WriteMap[operation])
+    {
+        g_PlayerPersistedKills[player] = max(g_PlayerPersistedKills[player], g_WriteSessionKills[operation])
+        g_PlayerPersistedDeaths[player] = max(g_PlayerPersistedDeaths[player], g_WriteSessionDeaths[operation])
+        g_PlayerPersistedHeadshots[player] = max(g_PlayerPersistedHeadshots[player], g_WriteSessionHeadshots[operation])
+        g_PlayerRowAcknowledged[player] = true
+        if (g_PlayerPendingWrite[player] == operation) g_PlayerPendingWrite[player] = -1
+    }
+    release_player_write(operation)
+    if (player >= 1 && player <= 32 && is_user_connected(player) && g_MatchActive) persist_player(player)
+}
+
+stock release_player_write(operation)
+{
+    if (operation < 0 || operation >= PLAYER_WRITE_MAX) return
+    remove_task(TASK_PLAYER_WRITE_RETRY + operation)
+    g_WriteUsed[operation] = false
+    g_WriteUid[operation][0] = 0; g_WriteAuth[operation][0] = 0
+    g_WriteName[operation][0] = 0; g_WriteTeam[operation][0] = 0
 }
 
 stock persist_all_players()
@@ -462,7 +716,7 @@ stock persist_all_players()
             {
                 refresh_player_identity(id)
             }
-            persist_player(id)
+            persist_player(id, true)
         }
     }
 }
@@ -497,16 +751,62 @@ stock refresh_player_identity(id)
     {
         formatex(g_PlayerAuth[id], charsmax(g_PlayerAuth[]), "BOT:%d", get_user_userid(id))
     }
+    load_player_identity(id)
+}
+
+stock player_identity_key(const uid[], mapNumber, const authId[], output[], length)
+{
+    formatex(output, length, "%s|%d|%s", uid, mapNumber, authId)
+}
+
+stock load_player_identity(id)
+{
+    if (g_PlayerIdentityLoaded[id] || !g_MatchUid[0] || !g_PlayerAuth[id][0]) return
+    new key[112], identity[PLAYER_IDENTITY_FIELDS]
+    player_identity_key(g_MatchUid, g_CurrentMapNumber, g_PlayerAuth[id], key, charsmax(key))
+    if (TrieGetArray(g_IdentityCache, key, identity, sizeof identity))
+    {
+        g_PlayerBaseKills[id] = identity[ID_OBSERVED_KILLS]
+        g_PlayerBaseDeaths[id] = identity[ID_OBSERVED_DEATHS]
+        g_PlayerBaseHeadshots[id] = identity[ID_OBSERVED_HEADSHOTS]
+        g_PlayerRowAcknowledged[id] = identity[ID_ACK_KILLS] >= identity[ID_OBSERVED_KILLS] &&
+            identity[ID_ACK_DEATHS] >= identity[ID_OBSERVED_DEATHS] &&
+            identity[ID_ACK_HEADSHOTS] >= identity[ID_OBSERVED_HEADSHOTS]
+    }
+    g_PlayerIdentityLoaded[id] = true
+}
+
+stock archive_player_identity(id)
+{
+    if (!g_MatchUid[0] || !g_PlayerAuth[id][0]) return
+    load_player_identity(id)
+    new key[112], identity[PLAYER_IDENTITY_FIELDS]
+    player_identity_key(g_MatchUid, g_CurrentMapNumber, g_PlayerAuth[id], key, charsmax(key))
+    TrieGetArray(g_IdentityCache, key, identity, sizeof identity)
+    identity[ID_OBSERVED_KILLS] = max(identity[ID_OBSERVED_KILLS], g_PlayerBaseKills[id] + g_PlayerKills[id])
+    identity[ID_OBSERVED_DEATHS] = max(identity[ID_OBSERVED_DEATHS], g_PlayerBaseDeaths[id] + g_PlayerDeaths[id])
+    identity[ID_OBSERVED_HEADSHOTS] = max(identity[ID_OBSERVED_HEADSHOTS], g_PlayerBaseHeadshots[id] + g_PlayerHeadshots[id])
+    TrieSetArray(g_IdentityCache, key, identity, sizeof identity)
 }
 
 stock reset_player(id)
 {
+    g_PlayerSession[id]++
     g_PlayerAuth[id][0] = 0
     g_PlayerName[id][0] = 0
     g_PlayerTeam[id][0] = 0
     g_PlayerKills[id] = 0
     g_PlayerDeaths[id] = 0
     g_PlayerHeadshots[id] = 0
+    g_PlayerPersistedKills[id] = 0
+    g_PlayerPersistedDeaths[id] = 0
+    g_PlayerPersistedHeadshots[id] = 0
+    g_PlayerBaseKills[id] = 0
+    g_PlayerBaseDeaths[id] = 0
+    g_PlayerBaseHeadshots[id] = 0
+    g_PlayerPendingWrite[id] = -1
+    g_PlayerIdentityLoaded[id] = false
+    g_PlayerRowAcknowledged[id] = false
 }
 
 stock reset_all_players()
@@ -603,6 +903,8 @@ stock restore_crossmap_match_uid()
     {
         copy(g_MatchUid, charsmax(g_MatchUid), storedUid)
         g_MatchActive = true
+        g_CurrentMapNumber = 2
+        capture_connected_players()
         g_WaitingForCrossmapResume = true
         remove_task(TASK_VALIDATE_CROSSMAP)
         set_task(2.0, "task_validate_crossmap_resume", TASK_VALIDATE_CROSSMAP)
