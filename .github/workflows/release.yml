@@ -1,0 +1,129 @@
+name: Build and Release
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  compatibility:
+    name: Compile AMXX ${{ matrix.amxx-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        amxx-version:
+          - "1.8.2"
+          - "1.9"
+          - "1.10"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Check source capabilities
+        env:
+          VERSION_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+        run: ./scripts/check-source-capabilities.sh
+
+      - name: Compile core and optional integrations
+        env:
+          AMXX_VERSION: ${{ matrix.amxx-version }}
+        run: ./scripts/build.sh
+
+  build:
+    name: Build release assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: compatibility
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Compile release plugins
+        env:
+          # Oldest supported compiler produces the widest-loadable release.
+          AMXX_VERSION: "1.8.2"
+        run: ./scripts/build.sh
+
+      - name: Test idempotent safe installation
+        run: ./scripts/test-install.sh
+
+      - name: Create bundle and flat release assets
+        run: |
+          package_version="$GITHUB_SHA"
+          case "$GITHUB_REF" in
+            refs/tags/v*) package_version="$GITHUB_REF_NAME" ;;
+          esac
+          ./scripts/package.sh "$package_version"
+          mkdir -p release-assets
+          cp compiled/kgb_clan_war.amxx compiled/kgb_clan_war.amxx.sha256 release-assets/
+          cp compiled/kgb_clan_war_hltv.amxx compiled/kgb_clan_war_hltv.amxx.sha256 release-assets/
+          cp compiled/kgb_clan_war_sql.amxx compiled/kgb_clan_war_sql.amxx.sha256 release-assets/
+          cp "dist/kgb-clan-war-$package_version.zip" "release-assets/kgb-clan-war-$package_version.zip"
+          cp "dist/kgb-clan-war-$package_version.zip.sha256" "release-assets/kgb-clan-war-$package_version.zip.sha256"
+
+      - name: Verify every checksum
+        run: |
+          cd release-assets
+          for checksum in *.sha256; do
+            sha256sum --check "$checksum"
+          done
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: kgb-clan-war-${{ github.sha }}
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - name: Download verified release assets
+        uses: actions/download-artifact@v5
+        with:
+          name: kgb-clan-war-${{ github.sha }}
+          path: release-assets
+
+      - name: Verify downloaded assets
+        run: |
+          test -s "release-assets/kgb-clan-war-$GITHUB_REF_NAME.zip"
+          cd release-assets
+          for checksum in *.sha256; do
+            sha256sum --check "$checksum"
+          done
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mapfile -t assets < <(find release-assets -maxdepth 1 -type f -print | sort)
+          gh release create "$GITHUB_REF_NAME" \
+            "${assets[@]}" \
+            --verify-tag \
+            --title "KGB Clan War $GITHUB_REF_NAME" \
+            --generate-notes

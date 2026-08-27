@@ -1,0 +1,47 @@
+; KGB Clan War core configuration.
+; Existing server configs are never overwritten by the installer.
+kgb_cw_enabled 1
+kgb_cw_min_ready 10
+kgb_cw_ready_mode "player"
+kgb_cw_auto_live 0
+kgb_cw_format "mr"
+kgb_cw_half_rounds 15
+kgb_cw_win_rounds 16
+kgb_cw_time_limit_minutes 20
+kgb_cw_playout 0
+kgb_cw_overtime 1
+; Set to 0 only when deliberately allowing unlimited overtime cycles.
+kgb_cw_overtime_max_cycles 3
+kgb_cw_overtime_half_rounds 3
+kgb_cw_overtime_money 10000
+kgb_cw_hud_announcements 1
+
+; Team and series metadata.
+kgb_cw_team_a_name "Team A"
+kgb_cw_team_b_name "Team B"
+kgb_cw_team_a_tag ""
+kgb_cw_team_b_tag ""
+kgb_cw_map1 ""
+kgb_cw_map2 ""
+kgb_cw_map_count 1
+
+; Each phase config is a validated basename under cstrike/. Do not include a
+; path or .cfg suffix. KGB Panel recipes supply kgb_gamemode.cfg.
+kgb_cw_warmup_config "kgb_gamemode"
+kgb_cw_match_config "kgb_gamemode"
+kgb_cw_overtime_config "kgb_gamemode"
+kgb_cw_default_config "kgb_gamemode"
+kgb_cw_halftime_delay 5
+kgb_cw_knife_vote 1
+kgb_cw_knife_vote_seconds 15
+kgb_cw_pug_mode 0
+
+; Risky, access-changing, or client-affecting features are opt-in.
+kgb_cw_set_hostname 0
+kgb_cw_hostname ""
+kgb_cw_set_password 0
+kgb_cw_password ""
+kgb_cw_disable_shield 0
+kgb_cw_client_demos 0
+kgb_cw_screenshots 0
+kgb_cw_file_stats 1

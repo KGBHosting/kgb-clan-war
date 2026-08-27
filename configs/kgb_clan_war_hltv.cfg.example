@@ -1,0 +1,14 @@
+; Optional KGB Clan War HLTV integration.
+; Disabled by default because UDP RCON exposes an additional network and
+; credential boundary. A locally connected HLTV proxy does not need RCON.
+kgb_cw_hltv_enabled 0
+kgb_cw_hltv_auto_record 1
+kgb_cw_hltv_start_delay 3.0
+kgb_cw_hltv_stop_delay 5.0
+kgb_cw_hltv_file_prefix "kgb_cw"
+kgb_cw_hltv_rcon_enabled 0
+kgb_cw_hltv_rcon_host "127.0.0.1"
+kgb_cw_hltv_rcon_port 27020
+; When RCON is explicitly enabled, put only the password in:
+; addons/amxmodx/configs/kgb_clan_war_hltv_rcon.key
+; The installer and release bundle never create or ship that file.

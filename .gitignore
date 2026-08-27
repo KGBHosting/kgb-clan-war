@@ -1,0 +1,7 @@
+.DS_Store
+.ci/amxx/
+.ci/downloads/
+compiled/*.amxx
+compiled/*.sha256
+dist/
+!compiled/.gitkeep

@@ -1,0 +1,22 @@
+// Safe competitive CS1.6 baseline used for warmup, live, overtime, and restore
+// phases by default. This mirrors the KGB Panel Clan War recipe.
+mp_timelimit 0
+mp_maxrounds 0
+mp_winlimit 0
+mp_roundtime 1.75
+mp_freezetime 12
+mp_buytime 0.25
+mp_c4timer 35
+mp_startmoney 800
+mp_friendlyfire 1
+mp_autoteambalance 0
+mp_limitteams 0
+mp_tkpunish 0
+mp_forcechasecam 2
+mp_fadetoblack 1
+mp_footsteps 1
+mp_flashlight 0
+mp_consistency 1
+sv_gravity 800
+sv_airaccelerate 10
+sv_maxspeed 320
