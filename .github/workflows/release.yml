@@ -122,8 +122,13 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           mapfile -t assets < <(find release-assets -maxdepth 1 -type f -print | sort)
+          release_flags=()
+          case "$GITHUB_REF_NAME" in
+            v0.*) release_flags+=(--prerelease) ;;
+          esac
           gh release create "$GITHUB_REF_NAME" \
             "${assets[@]}" \
+            "${release_flags[@]}" \
             --verify-tag \
             --title "KGB Clan War $GITHUB_REF_NAME" \
             --generate-notes

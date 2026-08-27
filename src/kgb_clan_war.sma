@@ -6,7 +6,7 @@
 #include <fun>
 
 #define PLUGIN_NAME "KGB Clan War"
-#define PLUGIN_VERSION "2.0.0"
+#define PLUGIN_VERSION "0.1.0"
 #define PLUGIN_AUTHOR "KGB Hosting"
 
 #define MAX_PLAYERS 32
