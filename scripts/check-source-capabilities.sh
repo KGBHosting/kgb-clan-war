@@ -20,7 +20,7 @@ for source in "$CORE" "$HLTV" "$SQL"; do
 		printf 'Missing required source: %s\n' "${source#"$ROOT_DIR/"}" >&2
 		exit 1
 	}
-	require_string "$source" '#define PLUGIN_VERSION "0.1.0"'
+	require_string "$source" '#define PLUGIN_VERSION "0.1.1"'
 	require_string "$source" 'SPDX-License-Identifier: GPL-3.0-or-later'
 done
 
@@ -48,6 +48,8 @@ require_string "$CORE" 'get_localinfo(LI_TEAM_A_SIDE, value, charsmax(value))'
 require_string "$CORE" 'set_localinfo(LI_TEAM_A_SIDE, "")'
 require_string "$CORE" 'if (!file_exists(path))'
 require_string "$CORE" 'Required %s config file does not exist: %s'
+require_string "$CORE" 'g_State != STATE_KNIFE_VOTE || g_KnifeDecisionMade'
+require_string "$CORE" 'reset_ready_players(); g_KnifeDecisionMade = false'
 
 require_string "$HLTV" '#include <sockets>'
 require_string "$HLTV" '"kgb_cw_hltv_enabled", "0"'

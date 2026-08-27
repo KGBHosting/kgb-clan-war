@@ -5,7 +5,7 @@
 #include <sockets>
 
 #define PLUGIN_NAME "KGB Clan War: HLTV"
-#define PLUGIN_VERSION "0.1.0"
+#define PLUGIN_VERSION "0.1.1"
 #define PLUGIN_AUTHOR "KGB Hosting"
 
 #define TASK_HLTV_START 88401
