@@ -20,12 +20,14 @@ The qualification line includes the practical AMX Match Deluxe feature
 set: player/team/admin ready modes; max-round, win-limit, and time-limit
 formats; playout; knife stay/swap voting; team names and tags; one- or two-map
 matches; phase configs; operator-managed league presets and default-map menus;
-an allowlisted saved menu snapshot; English/German message catalogs; an
-optional overtime play/draw vote; match score plus admin-only SteamID reports;
-interactive HLTV status/test/delay controls; match/half restart; random or
-admin-drafted PUG teams; optional
-hostname/password and client demo/screenshot actions; file statistics; optional
-HLTV recording; and optional SQLX persistence.
+an allowlisted saved menu snapshot and setup wizard; fresh English/German
+message catalogs; an optional overtime play/draw vote; a second-half re-ready
+gate and configurable automatic side-swap policy; clearly separated live-map
+and series scores; admin-only SteamID reports and an opt-in screenshot view;
+interactive HLTV status/test/delay controls; match/half restart; persistent
+random or admin-drafted PUG sessions; recurring ready/score HUDs; optional
+hostname/password and client demo/screenshot actions; lifecycle plus per-half
+player file statistics; optional HLTV recording; and optional SQLX persistence.
 
 “Deluxe feature set” describes supported operator workflows, not shared code or
 binary compatibility. KGB Clan War does not contain AMX Match Deluxe source,
@@ -55,6 +57,8 @@ the core before them in `plugins.ini`.
   AMX Mod X `addons/amxmodx/configs/sql.cfg`.
 - Client demo and screenshot commands are requests to connected clients. A
   client can reject or restrict them; the plugin cannot guarantee a recording.
+- Per-half file-stat rows describe players connected when a half ends. They do
+  not reconstruct a disconnected player's complete history.
 - A series is intentionally limited to one or two installed maps. Map and
   phase-config basenames are validated before they reach server commands.
 - This repository proves source review and compiler compatibility. A compiled
@@ -123,6 +127,7 @@ access flag.
 | `amx_cw_pug_assign <player> <a\|b>` | Assign a player during a manual PUG draft. |
 | `amx_cw_pug_stop` | Stop the active PUG and restore managed server state. |
 | `amx_cw_config_menu` | Open preset, default-map, and saved-snapshot controls. |
+| `amx_cw_setup`, `amx_cw_settings` | Open the interactive teams/tags, format, ready, swap, playout, overtime, PUG, HUD, screenshot, preset, map, and save workflow. |
 | `amx_cw_presets`, `amx_cw_preset <name>` | Browse or apply an installed clean-room league preset. |
 | `amx_cw_map_menu` | Select one or two installed maps from the operator catalog. |
 | `amx_cw_save_config`, `amx_cw_load_saved` | Save/load the non-secret allowlisted menu snapshot. |
@@ -132,10 +137,14 @@ access flag.
 | `amx_cw_stop` | Stop the match and restore the captured server environment. |
 | `amx_cw_score` | Show the public match score. |
 | `amx_cw_scoreids` | Print detailed score and player SteamIDs to an authorized admin's console only. |
+| `amx_cw_scoreids_snapshot` | Show an authorized admin the current score/SteamID MOTD, then request one screenshot when explicitly enabled. |
+| `amx_match <team-a> <team-b> [preset]` | One-shot compatibility launcher that applies an optional managed preset and enters warmup. |
 | `amx_cw_status` | Show detailed match status. |
 
 Player chat shortcuts are `/ready`, `/notready`, `/teamready`,
-`/teamnotready`, `/score`, and `/cw`; `!` prefixes also work.
+`/teamnotready`, `/start`, `/score`, and `/cw`; `!` prefixes also work. Bare
+`ready`, `notready`, `teamready`, and `teamnotready` are accepted for legacy
+client binds. `/start` still respects the configured state and access rules.
 
 ## Core configuration
 
@@ -146,10 +155,11 @@ The installer creates
 | --- | --- | --- |
 | `kgb_cw_enabled` | `1` | Enable core controls. |
 | `kgb_cw_display_name` | `KGB Clan War` | In-game control and knife-vote menu branding. |
-| `kgb_cw_chat_prefix` | `[KGB CW]` | Prefix for core chat, HUD, command feedback, score/status, and server announcements. |
+| `kgb_cw_chat_prefix` | `[KGB CW]` | Prefix for core chat, HUD, command feedback, score/status, announcements, and localized HLTV admin feedback. |
 | `kgb_cw_min_ready` | `10` | Required ready players. |
 | `kgb_cw_ready_mode` | `player` | `player`, `team`, or `admin`. |
 | `kgb_cw_auto_live` | `0` | Automatically start after readiness. |
+| `kgb_cw_hud_interval` | `10` | Recurring ready/live-score HUD interval when HUD announcements are enabled; `0` disables it, otherwise it is clamped to 3-60 seconds. |
 | `kgb_cw_format` | `mr` | `mr`, `wl`, or `tl`. |
 | `kgb_cw_half_rounds` | `15` | Regulation rounds per half for max-round mode. |
 | `kgb_cw_win_rounds` | `16` | Win target for win-limit mode. |
@@ -171,10 +181,13 @@ The installer creates
 | `kgb_cw_overtime_config` | `kgb_gamemode` | Validated overtime config basename. |
 | `kgb_cw_default_config` | `kgb_gamemode` | Config restored after the match. |
 | `kgb_cw_halftime_delay` | `5` | Delay before the next half. |
+| `kgb_cw_second_half_ready` | `0` | Pause before each regulation/overtime second half until the configured player/team/admin ready gate is satisfied again. |
+| `kgb_cw_swap_policy` | `halves` | `halves` swaps sides automatically; `off` retains sides. Knife/admin swaps remain explicit. |
 | `kgb_cw_knife_vote` | `1` | Let the knife winner vote to stay or swap. |
 | `kgb_cw_knife_vote_seconds` | `15` | Knife decision timeout. |
 | `kgb_cw_pug_mode` | `0` | Permit PUG randomization. |
 | `kgb_cw_pug_style` | `random` | Default `random` or admin-managed `manual` team workflow. |
+| `kgb_cw_pug_persist` | `1` | Preserve the PUG session across map two and return to warmup after a completed PUG series. |
 | `kgb_cw_allow_menu_save` | `0` | Permit writing the allowlisted, non-secret saved snapshot. |
 | `kgb_cw_set_hostname` | `0` | Opt in to temporary hostname changes. |
 | `kgb_cw_hostname` | empty | Temporary match hostname. |
@@ -183,7 +196,8 @@ The installer creates
 | `kgb_cw_disable_shield` | `0` | Opt in to changing shield availability. |
 | `kgb_cw_client_demos` | `0` | Request client demo recording. |
 | `kgb_cw_screenshots` | `0` | Request halftime/final screenshots. |
-| `kgb_cw_file_stats` | `1` | Write local lifecycle statistics. |
+| `kgb_cw_scoreid_screenshots` | `0` | Allow the admin-only detailed score/SteamID MOTD plus one screenshot request. |
+| `kgb_cw_file_stats` | `1` | Write lifecycle rows and connected-player half deltas/current-scoreboard K-D. |
 | `kgb_cw_hud_announcements` | `1` | Show match HUD announcements. |
 
 Brand values are trimmed and limited to visible ASCII: 47 bytes for the display
@@ -222,9 +236,11 @@ Steam authentication IDs, current names, team, kills, deaths, and headshots.
 Operators are responsible for an appropriate notice, lawful basis, access
 control, retention period, and deletion process for that personal data.
 
-The core loads `addons/amxmodx/data/lang/kgb_clan_war.txt`. The repository
-ships English and German menu/vote translations; operators can extend the
-AMX Mod X dictionary without recompiling. Preset and map catalogs are
+The core and HLTV integration load
+`addons/amxmodx/data/lang/kgb_clan_war.txt`. The repository ships fresh English
+and German translations for customer-visible controls and match lifecycle
+messages; operators can extend the AMX Mod X dictionary without recompiling.
+Technical server audit/error logs remain in English. Preset and map catalogs are
 operator-owned after first install. Catalog tokens are strictly validated,
 presets can only execute below the managed preset directory, and maps must be
 installed before they appear in the menu. The save workflow deliberately
@@ -235,8 +251,13 @@ HLTV administrators can use `amx_cw_hltv_menu`, `amx_cw_hltv_status`,
 `amx_cw_hltv_test`, and `amx_cw_hltv_delay <0-3600>`. A delay/test action is
 sent only to a connected proxy or the explicitly enabled UDP RCON path. The
 test queues a harmless `echo`; the operator must confirm its receipt in the
-HLTV console/log. Credentials remain file-only and cannot be entered through
-the menu or a CVAR.
+HLTV console/log. The configured delay is sent immediately before each record
+request. RCON operations are serialized; `recording=1` is not reported until
+the authenticated request is sent, while a failed stop remains active/unknown
+instead of claiming success. Disabling the integration or automatic recording
+also requests a stop for any active or pending recording. Menu changes affect
+the running server only; edit `kgb_clan_war_hltv.cfg` to persist them.
+Credentials remain file-only and cannot be entered through the menu or a CVAR.
 
 ## Build and compatibility
 

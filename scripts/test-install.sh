@@ -93,9 +93,23 @@ grep -Fqx 'kgb_cw_overtime_vote 0' \
 	"$TEST_ROOT_TWO/addons/amxmodx/configs/kgb_clan_war.cfg"
 grep -Fqx 'kgb_cw_allow_menu_save 0' \
 	"$TEST_ROOT_TWO/addons/amxmodx/configs/kgb_clan_war.cfg"
+grep -Fqx 'kgb_cw_second_half_ready 0' \
+	"$TEST_ROOT_TWO/addons/amxmodx/configs/kgb_clan_war.cfg"
+grep -Fqx 'kgb_cw_swap_policy "halves"' \
+	"$TEST_ROOT_TWO/addons/amxmodx/configs/kgb_clan_war.cfg"
+grep -Fqx 'kgb_cw_hud_interval 10' \
+	"$TEST_ROOT_TWO/addons/amxmodx/configs/kgb_clan_war.cfg"
+grep -Fqx 'kgb_cw_pug_persist 1' \
+	"$TEST_ROOT_TWO/addons/amxmodx/configs/kgb_clan_war.cfg"
+grep -Fqx 'kgb_cw_scoreid_screenshots 0' \
+	"$TEST_ROOT_TWO/addons/amxmodx/configs/kgb_clan_war.cfg"
 grep -Fqx 'competitive|Competitive MR15' \
 	"$TEST_ROOT_TWO/addons/amxmodx/configs/kgb_clan_war_presets.ini"
 grep -Fqx '[de]' "$TEST_ROOT_TWO/addons/amxmodx/data/lang/kgb_clan_war.txt"
+grep -Fqx 'CW_MATCH_LIVE = MATCH IS LIVE. Good luck and have fun.' \
+	"$TEST_ROOT_TWO/addons/amxmodx/data/lang/kgb_clan_war.txt"
+grep -Fqx 'CW_HLTV_TITLE = HLTV controls (configured delay: %d seconds)' \
+	"$TEST_ROOT_TWO/addons/amxmodx/data/lang/kgb_clan_war.txt"
 grep -Fqx 'mp_roundtime 1.75' "$TEST_ROOT_TWO/kgb_gamemode.cfg"
 grep -Fqx 'mp_friendlyfire 1' "$TEST_ROOT_TWO/kgb_gamemode.cfg"
 grep -Fqx 'mp_autoteambalance 0' "$TEST_ROOT_TWO/kgb_gamemode.cfg"
