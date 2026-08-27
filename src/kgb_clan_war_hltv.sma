@@ -5,7 +5,7 @@
 #include <sockets>
 
 #define PLUGIN_NAME "KGB Clan War: HLTV"
-#define PLUGIN_VERSION "0.1.1"
+#define PLUGIN_VERSION "1.0.0"
 #define PLUGIN_AUTHOR "KGB Hosting"
 
 #define TASK_HLTV_START 88401
@@ -66,7 +66,7 @@ public plugin_end()
 }
 
 /**
- * Public forward emitted by KGB Clan War 0.x qualification builds.
+ * Public forward emitted by compatible KGB Clan War core releases.
  * Unknown events are intentionally ignored for forward compatibility.
  */
 public kgb_cw_event(const event[], const team_a[], const team_b[], map_number, half, score_a, score_b)

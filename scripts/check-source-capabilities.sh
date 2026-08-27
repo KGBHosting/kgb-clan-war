@@ -20,7 +20,7 @@ for source in "$CORE" "$HLTV" "$SQL"; do
 		printf 'Missing required source: %s\n' "${source#"$ROOT_DIR/"}" >&2
 		exit 1
 	}
-	require_string "$source" '#define PLUGIN_VERSION "0.1.1"'
+	require_string "$source" '#define PLUGIN_VERSION "1.0.0"'
 	require_string "$source" 'SPDX-License-Identifier: GPL-3.0-or-later'
 done
 
