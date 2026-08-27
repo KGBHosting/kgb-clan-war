@@ -69,6 +69,7 @@
 #define LI_LEGACY_CLIENT "_kgbcw_legacy_client"
 #define LI_LEGACY_HLTV_ENABLED "_kgbcw_legacy_he"
 #define LI_LEGACY_HLTV_AUTO "_kgbcw_legacy_ha"
+#define LI_RECOVERY_PENDING "_kgbcw_recovery"
 #define LI_PUG_RESUME "_kgbcw_pug_resume"
 #define LI_PUG_NEXT "_kgbcw_pug_next"
 #define LI_PUG_FOLLOWING "_kgbcw_pug_follow"
@@ -741,7 +742,7 @@ public command_legacy_match(id, level, cid)
         }
     }
     set_pcvar_string(g_CvarTeamAName, teamA); set_pcvar_string(g_CvarTeamBName, teamB)
-    if (!runtime_config_valid(false))
+    if (!full_runtime_config_valid(false))
     {
         restore_managed_config_snapshot()
         cw_console_ml(id, "CW_ERR_LEGACY_START")
@@ -852,7 +853,7 @@ stock bool:configure_legacy_match(id, const teamAInput[], const teamBInput[], co
     set_pcvar_string(g_CvarMatchConfig, config)
     set_pcvar_string(g_CvarMap1, currentMap); set_pcvar_string(g_CvarMap2, secondMap)
     set_pcvar_num(g_CvarMapCount, secondMap[0] ? 2 : 1)
-    if (!runtime_config_valid(false))
+    if (!full_runtime_config_valid(false))
     {
         restore_managed_config_snapshot()
         set_pcvar_string(g_CvarMatchConfig, oldConfig)
@@ -1439,7 +1440,14 @@ public task_change_map()
 
 public task_resume_crossmap()
 {
-    new active[4]
+    new active[4], recoveryPending[4]
+    get_localinfo(LI_RECOVERY_PENDING, recoveryPending, charsmax(recoveryPending))
+    if (equal(recoveryPending, "1") && !restore_rejected_crossmap_state())
+    {
+        log_amx("Cross-map baseline recovery remains pending; unresolved evidence was preserved")
+        return
+    }
+
     get_localinfo(LI_ACTIVE, active, charsmax(active))
     if (!equal(active, "1"))
     {
@@ -1450,9 +1458,10 @@ public task_resume_crossmap()
     if (!parse_crossmap_envelope())
     {
         log_amx("Rejected stale or invalid cross-map match state")
-        if (!restore_rejected_crossmap_state())
-            log_amx("Rejected cross-map state did not contain a complete valid environment/recording baseline")
-        clear_crossmap_state()
+        new bool:recoveryComplete = restore_rejected_crossmap_state()
+        if (!recoveryComplete)
+            log_amx("Cross-map baseline recovery is incomplete; unresolved evidence was preserved")
+        clear_crossmap_state(!recoveryComplete)
         return
     }
     commit_crossmap_envelope()
@@ -2045,7 +2054,7 @@ stock bool:apply_managed_config_file(const path[], bool:preset)
         set_cvar_string(name, value)
     }
     refresh_branding(false)
-    if (runtime_config_valid(false))
+    if (full_runtime_config_valid(false))
     {
         load_runtime_settings(false)
         schedule_status_hud()
@@ -2076,7 +2085,7 @@ stock save_menu_config(id)
         cw_console_ml(id, "CW_ERR_SAVE_DISABLED")
         return
     }
-    if (!runtime_config_valid(false))
+    if (!full_runtime_config_valid(false))
     {
         cw_console_ml(id, "CW_ERR_SAVE_INVALID")
         return
@@ -2183,7 +2192,7 @@ stock cw_chat_ml(id, const key[], any:...)
 
 stock bool:start_warmup(bool:resetData)
 {
-    if (!runtime_config_valid(false))
+    if (!full_runtime_config_valid(false))
     {
         announce_ml("CW_ERR_WARMUP_CONFIG")
         return false
@@ -2211,7 +2220,7 @@ stock bool:start_warmup(bool:resetData)
 
 stock start_knife_round()
 {
-    if (!runtime_config_valid(false))
+    if (!full_runtime_config_valid(false))
     {
         announce_ml("CW_ERR_KNIFE_CONFIG")
         return
@@ -2229,7 +2238,7 @@ stock start_knife_round()
 stock start_live_match(bool:preserveSides)
 {
     new bool:restarting = g_State == STATE_LIVE || g_State == STATE_HALFTIME || g_State == STATE_HALF_READY || g_State == STATE_OVERTIME_VOTE || g_State == STATE_PLAYOUT_VOTE
-    if (!runtime_config_valid(true))
+    if (!full_runtime_config_valid(true))
     {
         /* A rejected restart must leave the running series and its immutable
          * manifest untouched. A pre-live legacy launch may safely unwind. */
@@ -2915,28 +2924,44 @@ stock randomize_pug_teams()
     announce_ml("CW_PUG_RANDOMIZED", count); audit_event("pug_randomized")
 }
 
-/* Validate into a temporary snapshot so a rejected transition cannot mutate a live match. */
-stock bool:runtime_config_valid(bool:requireStartingMap)
+/* Validate every release-managed CVAR and relationship using temporary values
+ * only. Rejected transitions cannot mutate runtime globals or CVARs. */
+stock bool:full_runtime_config_valid(bool:requireStartingMap)
 {
-    new MatchFormat:oldFormat = g_Format
-    new ReadyMode:oldReadyMode = g_ReadyMode
-    new oldMapNumber = g_MapNumber, oldMapCount = g_MapCount
-    new oldMap1[MAX_MAP_TOKEN + 1], oldMap2[MAX_MAP_TOKEN + 1]
-    new oldTeamA[MAX_TEAM_NAME + 1], oldTeamB[MAX_TEAM_NAME + 1]
-    new oldTagA[MAX_TEAM_TAG + 1], oldTagB[MAX_TEAM_TAG + 1]
-    copy(oldMap1, charsmax(oldMap1), g_Map1); copy(oldMap2, charsmax(oldMap2), g_Map2)
-    copy(oldTeamA, charsmax(oldTeamA), g_TeamAName); copy(oldTeamB, charsmax(oldTeamB), g_TeamBName)
-    copy(oldTagA, charsmax(oldTagA), g_TeamATag); copy(oldTagB, charsmax(oldTagB), g_TeamBTag)
+    new cvarName[64], value[SERIES_MANIFEST_VALUE_MAX + 1]
+    for (new index = 0; index < sizeof g_ManagedConfigNames; index++)
+    {
+        copy(cvarName, charsmax(cvarName), g_ManagedConfigNames[index])
+        if (!cvar_exists(cvarName)) return false
+        get_cvar_string(cvarName, value, charsmax(value)); trim(value)
+        if (!managed_config_value_valid(index, value)) return false
+    }
+    for (new index = 0; index < sizeof g_SeriesExtraConfigNames; index++)
+    {
+        copy(cvarName, charsmax(cvarName), g_SeriesExtraConfigNames[index])
+        if (!cvar_exists(cvarName))
+        {
+            new SeriesExtraConfigIndex:extraIndex = SeriesExtraConfigIndex:index
+            if (extraIndex == SC_HLTV_ENABLED || extraIndex == SC_HLTV_AUTO_RECORD) copy(value, charsmax(value), "-")
+            else return false
+        }
+        else get_cvar_string(cvarName, value, charsmax(value))
+        trim(value)
+        if (!series_extra_value_valid(index, value)) return false
+    }
 
-    new bool:valid = load_runtime_settings(false)
-    if (valid && requireStartingMap) valid = validate_starting_map()
-
-    g_Format = oldFormat; g_ReadyMode = oldReadyMode
-    g_MapNumber = oldMapNumber; g_MapCount = oldMapCount
-    copy(g_Map1, charsmax(g_Map1), oldMap1); copy(g_Map2, charsmax(g_Map2), oldMap2)
-    copy(g_TeamAName, charsmax(g_TeamAName), oldTeamA); copy(g_TeamBName, charsmax(g_TeamBName), oldTeamB)
-    copy(g_TeamATag, charsmax(g_TeamATag), oldTagA); copy(g_TeamBTag, charsmax(g_TeamBTag), oldTagB)
-    return valid
+    new map1[MAX_MAP_TOKEN + 1], map2[MAX_MAP_TOKEN + 1], current[MAX_MAP_TOKEN + 1]
+    get_pcvar_string(g_CvarMap1, map1, charsmax(map1)); get_pcvar_string(g_CvarMap2, map2, charsmax(map2))
+    strtolower(map1); strtolower(map2)
+    if (!map1[0]) get_mapname(map1, charsmax(map1))
+    if (!valid_map_token(map1)) return false
+    if (get_pcvar_num(g_CvarMapCount) == 2 && (!valid_map_token(map2) || equali(map1, map2))) return false
+    if (requireStartingMap)
+    {
+        get_mapname(current, charsmax(current))
+        if (!equali(current, map1)) return false
+    }
+    return true
 }
 
 stock bool:load_runtime_settings(bool:crossmap)
@@ -2996,13 +3021,6 @@ stock bool:load_runtime_settings(bool:crossmap)
 
     if (!crossmap) g_MapNumber = 1
     return true
-}
-
-stock bool:validate_starting_map()
-{
-    new current[MAX_MAP_TOKEN + 1]
-    get_mapname(current, charsmax(current))
-    return bool:equali(current, g_Map1)
 }
 
 stock bool:validate_phase_config(cvar, const phase[])
@@ -3281,56 +3299,145 @@ stock commit_crossmap_envelope()
  * a failed resume cannot strand temporary credentials or recording policy. */
 stock bool:restore_rejected_crossmap_state()
 {
-    new envSaved[4], oldHostname[128], oldPassword[64], oldShield[8], shield
+    new recoveryPending[4], envSaved[4], oldHostname[128], oldPassword[64], oldShield[8], shield
     new legacyValue[4], legacyClientValue[8], legacyHltvEnabledValue[8], legacyHltvAutoValue[8]
     new legacyActive, legacyClient, legacyHltvEnabled, legacyHltvAuto
+    new bool:complete = true, bool:legacyComplete = true, bool:legacyValueRestored
+    get_localinfo(LI_RECOVERY_PENDING, recoveryPending, charsmax(recoveryPending))
+    new bool:wasPending = bool:equal(recoveryPending, "1")
     get_localinfo(LI_ENV_SAVED, envSaved, charsmax(envSaved))
     get_localinfo(LI_OLD_HOST, oldHostname, charsmax(oldHostname)); get_localinfo(LI_OLD_PASS, oldPassword, charsmax(oldPassword))
     get_localinfo(LI_OLD_SHIELD, oldShield, charsmax(oldShield))
+
+    if (equal(envSaved, "done"))
+    {
+        if (!wasPending) complete = false
+    }
+    else if (envSaved[0])
+    {
+        if (equal(envSaved, "1") && valid_snapshot_value(oldHostname, 127) && valid_snapshot_value(oldPassword, 63) &&
+            (!oldShield[0] || parse_bool_exact(oldShield, shield)))
+        {
+            copy(g_OldHostname, charsmax(g_OldHostname), oldHostname)
+            copy(g_OldPassword, charsmax(g_OldPassword), oldPassword)
+            copy(g_OldShield, charsmax(g_OldShield), oldShield)
+            g_EnvironmentSaved = true
+            restore_environment()
+            set_localinfo(LI_OLD_HOST, ""); set_localinfo(LI_OLD_PASS, "")
+            set_localinfo(LI_OLD_SHIELD, ""); set_localinfo(LI_ENV_SAVED, "done")
+        }
+        else complete = false
+    }
+    else complete = false
+
     get_localinfo(LI_LEGACY_RECORD, legacyValue, charsmax(legacyValue))
-    get_localinfo(LI_LEGACY_CLIENT, legacyClientValue, charsmax(legacyClientValue))
-    get_localinfo(LI_LEGACY_HLTV_ENABLED, legacyHltvEnabledValue, charsmax(legacyHltvEnabledValue))
-    get_localinfo(LI_LEGACY_HLTV_AUTO, legacyHltvAutoValue, charsmax(legacyHltvAutoValue))
-
-    if (!equal(envSaved, "1") || !valid_snapshot_value(oldHostname, 127) || !valid_snapshot_value(oldPassword, 63) ||
-        (oldShield[0] && !parse_bool_exact(oldShield, shield)) ||
-        !parse_bool_exact(legacyValue, legacyActive) || !parse_bool_exact(legacyClientValue, legacyClient) ||
-        !parse_legacy_tristate(legacyHltvEnabledValue, legacyHltvEnabled) ||
-        !parse_legacy_tristate(legacyHltvAutoValue, legacyHltvAuto)) return false
-    if (legacyActive)
+    if (equal(legacyValue, "done"))
     {
-        if ((legacyHltvEnabled >= 0 && !cvar_exists("kgb_cw_hltv_enabled")) ||
-            (legacyHltvAuto >= 0 && !cvar_exists("kgb_cw_hltv_auto_record"))) return false
+        if (!wasPending) legacyComplete = false
     }
-    else if (legacyClient != 0 || legacyHltvEnabled != -1 || legacyHltvAuto != -1) return false
-
-    copy(g_OldHostname, charsmax(g_OldHostname), oldHostname)
-    copy(g_OldPassword, charsmax(g_OldPassword), oldPassword)
-    copy(g_OldShield, charsmax(g_OldShield), oldShield)
-    g_EnvironmentSaved = true
-    restore_environment()
-    if (legacyActive)
+    else if (!legacyValue[0])
+        legacyComplete = false
+    else
     {
-        g_LegacyRecordOverride = true
-        g_LegacyOldClientDemos = legacyClient
-        g_LegacyOldHltvEnabled = legacyHltvEnabled
-        g_LegacyOldHltvAuto = legacyHltvAuto
-        restore_legacy_record_mode()
+        if (!parse_bool_exact(legacyValue, legacyActive)) legacyComplete = false
+        else
+        {
+            get_localinfo(LI_LEGACY_CLIENT, legacyClientValue, charsmax(legacyClientValue))
+            get_localinfo(LI_LEGACY_HLTV_ENABLED, legacyHltvEnabledValue, charsmax(legacyHltvEnabledValue))
+            get_localinfo(LI_LEGACY_HLTV_AUTO, legacyHltvAutoValue, charsmax(legacyHltvAutoValue))
+
+            if (equal(legacyClientValue, "done"))
+            {
+                if (!wasPending) legacyComplete = false
+            }
+            else if (legacyClientValue[0])
+            {
+                if (parse_bool_exact(legacyClientValue, legacyClient) && (legacyActive || legacyClient == 0))
+                {
+                    if (legacyActive) set_pcvar_num(g_CvarClientDemos, legacyClient)
+                    set_localinfo(LI_LEGACY_CLIENT, "done")
+                    if (legacyActive) legacyValueRestored = true
+                }
+                else legacyComplete = false
+            }
+            else legacyComplete = false
+            if (equal(legacyHltvEnabledValue, "done"))
+            {
+                if (!wasPending) legacyComplete = false
+            }
+            else if (legacyHltvEnabledValue[0])
+            {
+                if (!parse_legacy_tristate(legacyHltvEnabledValue, legacyHltvEnabled) ||
+                    (!legacyActive && legacyHltvEnabled != -1)) legacyComplete = false
+                else if (legacyHltvEnabled < 0 || cvar_exists("kgb_cw_hltv_enabled"))
+                {
+                    if (legacyHltvEnabled >= 0) set_cvar_num("kgb_cw_hltv_enabled", legacyHltvEnabled)
+                    set_localinfo(LI_LEGACY_HLTV_ENABLED, "done")
+                    if (legacyActive) legacyValueRestored = true
+                }
+                else legacyComplete = false
+            }
+            else legacyComplete = false
+            if (equal(legacyHltvAutoValue, "done"))
+            {
+                if (!wasPending) legacyComplete = false
+            }
+            else if (legacyHltvAutoValue[0])
+            {
+                if (!parse_legacy_tristate(legacyHltvAutoValue, legacyHltvAuto) ||
+                    (!legacyActive && legacyHltvAuto != -1)) legacyComplete = false
+                else if (legacyHltvAuto < 0 || cvar_exists("kgb_cw_hltv_auto_record"))
+                {
+                    if (legacyHltvAuto >= 0) set_cvar_num("kgb_cw_hltv_auto_record", legacyHltvAuto)
+                    set_localinfo(LI_LEGACY_HLTV_AUTO, "done")
+                    if (legacyActive) legacyValueRestored = true
+                }
+                else legacyComplete = false
+            }
+            else legacyComplete = false
+
+            get_localinfo(LI_LEGACY_CLIENT, legacyClientValue, charsmax(legacyClientValue))
+            get_localinfo(LI_LEGACY_HLTV_ENABLED, legacyHltvEnabledValue, charsmax(legacyHltvEnabledValue))
+            get_localinfo(LI_LEGACY_HLTV_AUTO, legacyHltvAutoValue, charsmax(legacyHltvAutoValue))
+            if (legacyComplete && equal(legacyClientValue, "done") &&
+                equal(legacyHltvEnabledValue, "done") && equal(legacyHltvAutoValue, "done"))
+            {
+                set_localinfo(LI_LEGACY_RECORD, "done")
+                set_localinfo(LI_LEGACY_CLIENT, ""); set_localinfo(LI_LEGACY_HLTV_ENABLED, "")
+                set_localinfo(LI_LEGACY_HLTV_AUTO, "")
+            }
+            else legacyComplete = false
+        }
     }
-    return true
+    if (!legacyComplete) complete = false
+    if (legacyValueRestored && legacyComplete) audit_event("legacy_record_mode_restored")
+    if (complete)
+    {
+        set_localinfo(LI_OLD_HOST, ""); set_localinfo(LI_OLD_PASS, "")
+        set_localinfo(LI_OLD_SHIELD, ""); set_localinfo(LI_ENV_SAVED, "")
+        set_localinfo(LI_LEGACY_RECORD, ""); set_localinfo(LI_LEGACY_CLIENT, "")
+        set_localinfo(LI_LEGACY_HLTV_ENABLED, ""); set_localinfo(LI_LEGACY_HLTV_AUTO, "")
+    }
+    set_localinfo(LI_RECOVERY_PENDING, complete ? "" : "1")
+    return complete
 }
 
-stock clear_crossmap_state()
+stock clear_crossmap_state(bool:preserveRecovery = false)
 {
     set_localinfo(LI_ACTIVE, ""); set_localinfo(LI_MAP, "")
     clear_series_manifest_storage()
     set_localinfo(LI_SCORE_A, ""); set_localinfo(LI_SCORE_B, "")
-    set_localinfo(LI_MATCH_ID, ""); set_localinfo(LI_OLD_HOST, "")
-    set_localinfo(LI_OLD_PASS, ""); set_localinfo(LI_OLD_SHIELD, ""); set_localinfo(LI_ENV_SAVED, "")
+    set_localinfo(LI_MATCH_ID, "")
     set_localinfo(LI_TEAM_A_SIDE, "")
     set_localinfo(LI_PUG_ACTIVE, ""); set_localinfo(LI_PUG_STYLE, "")
-    set_localinfo(LI_LEGACY_RECORD, ""); set_localinfo(LI_LEGACY_CLIENT, "")
-    set_localinfo(LI_LEGACY_HLTV_ENABLED, ""); set_localinfo(LI_LEGACY_HLTV_AUTO, "")
+    if (!preserveRecovery)
+    {
+        set_localinfo(LI_OLD_HOST, ""); set_localinfo(LI_OLD_PASS, "")
+        set_localinfo(LI_OLD_SHIELD, ""); set_localinfo(LI_ENV_SAVED, "")
+        set_localinfo(LI_LEGACY_RECORD, ""); set_localinfo(LI_LEGACY_CLIENT, "")
+        set_localinfo(LI_LEGACY_HLTV_ENABLED, ""); set_localinfo(LI_LEGACY_HLTV_AUTO, "")
+        set_localinfo(LI_RECOVERY_PENDING, "")
+    }
 }
 
 stock create_match_id() { get_time("%Y%m%d_%H%M%S", g_MatchId, charsmax(g_MatchId)); }

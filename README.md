@@ -246,7 +246,10 @@ first, so a partial write or stale resume is rejected as a unit. Later CVAR
 edits cannot silently change map two of the running series. If the full resume
 is rejected, a separately validated recovery snapshot restores the pre-match
 hostname, password, shield setting, and any temporary legacy recording policy
-before the stale envelope is cleared.
+before the stale envelope is cleared. Recovery domains are independent: if an
+optional HLTV CVAR is unavailable on map two, access/environment and client-demo
+baselines are still restored immediately, while the unresolved validated HLTV
+baseline remains explicitly marked in local state for a later plugin/map load.
 
 Persistent PUG completion follows the server's `mapcyclefile`: the next valid,
 installed map after the current map becomes map one and the following distinct
@@ -357,7 +360,7 @@ first four bytes are not the AMXX `XXMA` magic used by the Panel artifact gate.
 ./scripts/test-runtime-regressions.sh
 ./scripts/test-sql-migration.sh
 ./scripts/test-install.sh
-./scripts/test-package-reproducibility.sh v0.3.0
+./scripts/test-build-reproducibility.sh v0.3.0
 ```
 
 Compatibility checks compile all three plugins against AMX Mod X `1.8.2`,
@@ -367,8 +370,9 @@ successful compile with a newer compiler does not establish backward binary
 compatibility. Tagged `v*` pushes must match the version declared in every
 source file. The GitHub workflow repeats the matrix, runtime/filesystem
 regressions, an isolated MariaDB upgrade from the exact public v0.2.0 player
-schema, installation tests, two-build byte-for-byte ZIP reproducibility, and
-checksum verification before creating a release.
+schema, installation tests, two clean independent compiler/package builds with
+matching source, binary, and ZIP hashes, and checksum verification before
+creating a release.
 
 ## Release assets
 

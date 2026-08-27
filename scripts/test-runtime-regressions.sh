@@ -68,7 +68,16 @@ test "$live_format" = mr
 require_string "$CORE" 'stock bool:restore_rejected_crossmap_state()'
 require_string "$CORE" 'g_EnvironmentSaved = true'
 require_string "$CORE" 'restore_environment()'
-require_string "$CORE" 'g_LegacyOldClientDemos = legacyClient'
+require_string "$CORE" 'set_pcvar_num(g_CvarClientDemos, legacyClient)'
+require_string "$CORE" 'set_localinfo(LI_RECOVERY_PENDING, complete ? "" : "1")'
+require_string "$CORE" 'clear_crossmap_state(!recoveryComplete)'
+require_string "$CORE" 'Cross-map baseline recovery remains pending; unresolved evidence was preserved'
+require_string "$CORE" 'set_localinfo(LI_OLD_SHIELD, ""); set_localinfo(LI_ENV_SAVED, "done")'
+require_string "$CORE" 'set_localinfo(LI_LEGACY_CLIENT, "done")'
+if grep -Fq 'legacyHltvEnabled >= 0 && !cvar_exists("kgb_cw_hltv_enabled")' "$CORE"; then
+	printf 'Missing optional HLTV CVAR still aborts independent cross-map recovery.\n' >&2
+	exit 1
+fi
 resume_restore_line="$(awk '/public task_resume_crossmap\(\)/,/stock bool:mode_enabled\(id\)/ { if (index($0, "restore_rejected_crossmap_state()")) { print NR; exit } }' "$CORE")"
 resume_clear_line="$(awk '/public task_resume_crossmap\(\)/,/stock bool:mode_enabled\(id\)/ { if (index($0, "clear_crossmap_state()")) { print NR; exit } }' "$CORE")"
 test -n "$resume_restore_line" && test -n "$resume_clear_line" && test "$resume_restore_line" -lt "$resume_clear_line"
@@ -97,6 +106,25 @@ if test "$valid_full_envelope" -ne 1 && test "$valid_recovery_baseline" -eq 1; t
 fi
 test "$runtime_hostname|$runtime_password|$runtime_shield" = 'Customer Server|customer-secret|1'
 test "$runtime_client_demos|$runtime_hltv_enabled|$runtime_hltv_auto" = '0|1|0'
+
+# Missing optional HLTV CVARs cannot block independent access/environment and
+# client-demo recovery. Their validated baselines remain as explicit pending
+# evidence until a later load can apply them.
+runtime_hostname='Temporary Match'
+runtime_password='temporary-secret'
+runtime_shield=0
+runtime_client_demos=1
+hltv_cvars_available=0
+pending_hltv_enabled="$baseline_hltv_enabled"
+pending_hltv_auto="$baseline_hltv_auto"
+recovery_pending=0
+runtime_hostname="$baseline_hostname"
+runtime_password="$baseline_password"
+runtime_shield="$baseline_shield"
+runtime_client_demos="$baseline_client_demos"
+if test "$hltv_cvars_available" -ne 1; then recovery_pending=1; fi
+test "$runtime_hostname|$runtime_password|$runtime_shield|$runtime_client_demos" = 'Customer Server|customer-secret|1|0'
+test "$recovery_pending|$pending_hltv_enabled|$pending_hltv_auto" = '1|1|0'
 
 # TL expiry has an explicit no-winner Round_End path, and all terminal half
 # paths capture before the regulation/OT transition.
@@ -256,15 +284,26 @@ test "$legacy_restore_line" -gt "$legacy_validate_line"
 
 # Full and compact legacy launchers validate the complete staged runtime before
 # unwinding the currently active recording override. Invalid ready mode, swap
-# policy, map topology, or phase config must preserve the whole prior tuple.
-short_runtime_line="$(awk '/public command_legacy_match\(id, level, cid\)/,/public command_legacy_match2\(id, level, cid\)/ { if (index($0, "runtime_config_valid(false)")) { print NR; exit } }' "$CORE")"
+# policy, map topology, phase config, or bounded numeric/boolean setting must
+# preserve the whole prior tuple.
+short_runtime_line="$(awk '/public command_legacy_match\(id, level, cid\)/,/public command_legacy_match2\(id, level, cid\)/ { if (index($0, "full_runtime_config_valid(false)")) { print NR; exit } }' "$CORE")"
 short_restore_line="$(awk '/public command_legacy_match\(id, level, cid\)/,/public command_legacy_match2\(id, level, cid\)/ { if (index($0, "restore_legacy_record_mode()")) { print NR; exit } }' "$CORE")"
-full_runtime_line="$(awk '/stock bool:configure_legacy_match\(/,/stock bool:apply_legacy_rule\(/ { if (index($0, "runtime_config_valid(false)")) { print NR; exit } }' "$CORE")"
+full_runtime_line="$(awk '/stock bool:configure_legacy_match\(/,/stock bool:apply_legacy_rule\(/ { if (index($0, "full_runtime_config_valid(false)")) { print NR; exit } }' "$CORE")"
 full_restore_line="$(awk '/stock bool:configure_legacy_match\(/,/stock bool:apply_legacy_rule\(/ { if (index($0, "restore_legacy_record_mode()")) { print NR; exit } }' "$CORE")"
 test -n "$short_runtime_line" && test -n "$short_restore_line" && test "$short_runtime_line" -lt "$short_restore_line"
 test -n "$full_runtime_line" && test -n "$full_restore_line" && test "$full_runtime_line" -lt "$full_restore_line"
 require_string "$CORE" 'restore_legacy_snapshot(oldLegacyOverride, oldCurrentClientDemos,'
 require_string "$CORE" 'restore_managed_config_snapshot()'
+require_string "$CORE" 'stock bool:full_runtime_config_valid(bool:requireStartingMap)'
+require_string "$CORE" 'index < sizeof g_ManagedConfigNames'
+require_string "$CORE" 'if (!managed_config_value_valid(index, value)) return false'
+require_string "$CORE" 'index < sizeof g_SeriesExtraConfigNames'
+require_string "$CORE" 'if (!series_extra_value_valid(index, value)) return false'
+require_string "$CORE" 'case MC_HALF_ROUNDS, MC_WIN_ROUNDS: return parse_uint_exact(value, 1, 100, number)'
+require_string "$CORE" 'case MC_OT_MONEY: return parse_uint_exact(value, 800, 16000, number)'
+require_string "$CORE" 'case MC_OT_VOTE_SECONDS: return parse_uint_exact(value, 5, 30, number)'
+require_string "$CORE" 'case SC_HALFTIME_DELAY: return parse_uint_exact(value, 1, 30, number)'
+require_string "$CORE" 'SC_SET_PASSWORD, SC_DISABLE_SHIELD, SC_CLIENT_DEMOS, SC_FILE_STATS,'
 require_string "$CORE" 'Invalid kgb_cw_ready_mode; expected player, team or admin'
 require_string "$CORE" 'Invalid kgb_cw_swap_policy; expected halves or off'
 require_string "$CORE" 'Invalid kgb_cw_map2 for two-map match'
@@ -278,12 +317,19 @@ replacement_valid() {
 	case "$1" in player | team | admin) ;; *) return 1 ;; esac
 	case "$2" in halves | off) ;; *) return 1 ;; esac
 	if test "$3" -eq 2 && { test -z "$4" || test "$4" = "$5"; }; then return 1; fi
-	test "$6" -eq 1
+	test "$6" -eq 1 || return 1
+	test "$7" -ge 1 && test "$7" -le 100 || return 1
+	test "$8" -ge 1 && test "$8" -le 30 || return 1
+	case "$9" in 0 | 1) ;; *) return 1 ;; esac
+	test "${10}" -ge 800 && test "${10}" -le 16000 || return 1
+	test "${11}" -ge 5 && test "${11}" -le 30 || return 1
+	case "${12}" in 0 | 1) ;; *) return 1 ;; esac
 }
 attempt_invalid_replacement() {
-	local label="$1" ready="$2" swap="$3" map_count="$4" map1="$5" map2="$6" phase_exists="$7"
+	local label="$1"
+	shift
 	local before="$legacy_override"
-	if replacement_valid "$ready" "$swap" "$map_count" "$map1" "$map2" "$phase_exists"; then
+	if replacement_valid "$@"; then
 		printf 'The %s regression fixture unexpectedly validated.\n' "$label" >&2
 		exit 1
 	fi
@@ -292,10 +338,16 @@ attempt_invalid_replacement() {
 		exit 1
 	}
 }
-attempt_invalid_replacement ready broken halves 1 de_dust2 '' 1
-attempt_invalid_replacement swap player broken 1 de_dust2 '' 1
-attempt_invalid_replacement topology player halves 2 de_dust2 de_dust2 1
-attempt_invalid_replacement phase player halves 1 de_dust2 '' 0
+attempt_invalid_replacement ready broken halves 1 de_dust2 '' 1 15 5 0 10000 15 1
+attempt_invalid_replacement swap player broken 1 de_dust2 '' 1 15 5 0 10000 15 1
+attempt_invalid_replacement topology player halves 2 de_dust2 de_dust2 1 15 5 0 10000 15 1
+attempt_invalid_replacement phase player halves 1 de_dust2 '' 0 15 5 0 10000 15 1
+attempt_invalid_replacement half_rounds player halves 1 de_dust2 '' 1 0 5 0 10000 15 1
+attempt_invalid_replacement halftime_delay player halves 1 de_dust2 '' 1 15 0 0 10000 15 1
+attempt_invalid_replacement client_demos player halves 1 de_dust2 '' 1 15 5 2 10000 15 1
+attempt_invalid_replacement overtime_money player halves 1 de_dust2 '' 1 15 5 0 799 15 1
+attempt_invalid_replacement overtime_vote_seconds player halves 1 de_dust2 '' 1 15 5 0 10000 4 1
+attempt_invalid_replacement boolean player halves 1 de_dust2 '' 1 15 5 0 10000 15 2
 
 require_string "$CORE" 'g_CvarFileStats = register_cvar("kgb_cw_file_stats", "0")'
 
