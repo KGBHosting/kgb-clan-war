@@ -6,8 +6,11 @@
 #include <fun>
 
 #define PLUGIN_NAME "KGB Clan War"
-#define PLUGIN_VERSION "1.0.0"
+#define PLUGIN_VERSION "0.2.0"
 #define PLUGIN_AUTHOR "KGB Hosting"
+
+#define DEFAULT_DISPLAY_NAME "KGB Clan War"
+#define DEFAULT_CHAT_PREFIX "[KGB CW]"
 
 #define MAX_PLAYERS 32
 #define MAX_TEAM_NAME 31
@@ -16,6 +19,9 @@
 #define MAX_MAP_TOKEN 31
 #define MAX_CONFIG_TOKEN 31
 #define MAX_MATCH_ID 31
+#define MAX_DISPLAY_NAME 47
+#define MAX_CHAT_PREFIX 23
+#define MAX_BRANDED_MESSAGE 165
 
 #define TASK_LO3_1 73101
 #define TASK_LO3_2 73102
@@ -64,6 +70,8 @@ new g_TeamAName[MAX_TEAM_NAME + 1] = "Team A"
 new g_TeamBName[MAX_TEAM_NAME + 1] = "Team B"
 new g_TeamATag[MAX_TEAM_TAG + 1], g_TeamBTag[MAX_TEAM_TAG + 1]
 new g_MatchId[MAX_MATCH_ID + 1]
+new g_DisplayName[MAX_DISPLAY_NAME + 1] = DEFAULT_DISPLAY_NAME
+new g_ChatPrefix[MAX_CHAT_PREFIX + 1] = DEFAULT_CHAT_PREFIX
 new g_OldHostname[128], g_OldPassword[64], g_OldShield[8]
 
 new CsTeams:g_KnifeWinningSide
@@ -72,6 +80,7 @@ new bool:g_KnifeVoted[MAX_PLAYERS + 1]
 new g_ForwardEvent
 
 new g_CvarEnabled, g_CvarMinReady, g_CvarReadyMode, g_CvarAutoLive
+new g_CvarDisplayName, g_CvarChatPrefix
 new g_CvarFormat, g_CvarHalfRounds, g_CvarWinRounds, g_CvarTimeLimitMinutes, g_CvarPlayout
 new g_CvarOvertime, g_CvarOvertimeMaxCycles, g_CvarOvertimeHalfRounds, g_CvarOvertimeMoney
 new g_CvarHudAnnouncements, g_CvarState
@@ -88,6 +97,8 @@ public plugin_init()
     register_cvar("kgb_cw_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
 
     g_CvarEnabled = register_cvar("kgb_cw_enabled", "1")
+    g_CvarDisplayName = register_cvar("kgb_cw_display_name", DEFAULT_DISPLAY_NAME)
+    g_CvarChatPrefix = register_cvar("kgb_cw_chat_prefix", DEFAULT_CHAT_PREFIX)
     g_CvarMinReady = register_cvar("kgb_cw_min_ready", "10")
     g_CvarReadyMode = register_cvar("kgb_cw_ready_mode", "player")
     g_CvarAutoLive = register_cvar("kgb_cw_auto_live", "0")
@@ -163,6 +174,7 @@ public plugin_cfg()
     /* This is a fixed package-owned path, not user input. */
     server_cmd("exec addons/amxmodx/configs/kgb_clan_war.cfg")
     server_exec()
+    refresh_branding(true)
     set_cw_state(STATE_OFF)
     set_task(1.0, "task_resume_crossmap", TASK_RESUME_MAP)
 }
@@ -218,7 +230,7 @@ public command_live(id, level, cid)
 public command_relo3(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
-    if (g_State != STATE_LIVE) console_print(id, "[KGB CW] A live match is not running.")
+    if (g_State != STATE_LIVE) cw_console(id, "A live match is not running.")
     else begin_lo3(false)
     return PLUGIN_HANDLED
 }
@@ -226,7 +238,7 @@ public command_relo3(id, level, cid)
 public command_swap(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
-    if (g_Lo3Running || g_State == STATE_HALFTIME) console_print(id, "[KGB CW] A transition is in progress.")
+    if (g_Lo3Running || g_State == STATE_HALFTIME) cw_console(id, "A transition is in progress.")
     else
     {
         swap_players()
@@ -240,7 +252,7 @@ public command_swap(id, level, cid)
 public command_restart_half(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
-    if (g_State != STATE_LIVE) console_print(id, "[KGB CW] A live match is not running.")
+    if (g_State != STATE_LIVE) cw_console(id, "A live match is not running.")
     else restart_current_half()
     return PLUGIN_HANDLED
 }
@@ -258,8 +270,8 @@ public command_restart_match(id, level, cid)
 public command_pug_randomize(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
-    if (!get_pcvar_num(g_CvarPugMode)) console_print(id, "[KGB CW] Set kgb_cw_pug_mode 1 to opt in.")
-    else if (g_State != STATE_OFF && g_State != STATE_WARMUP) console_print(id, "[KGB CW] Randomization is only safe while off or warming up.")
+    if (!get_pcvar_num(g_CvarPugMode)) cw_console(id, "Set kgb_cw_pug_mode 1 to opt in.")
+    else if (g_State != STATE_OFF && g_State != STATE_WARMUP) cw_console(id, "Randomization is only safe while off or warming up.")
     else randomize_pug_teams()
     return PLUGIN_HANDLED
 }
@@ -271,7 +283,7 @@ public command_teams(id, level, cid)
     read_argv(1, a, charsmax(a)); read_argv(2, b, charsmax(b)); trim(a); trim(b)
     if (!valid_display_token(a, MAX_TEAM_NAME) || !valid_display_token(b, MAX_TEAM_NAME))
     {
-        console_print(id, "[KGB CW] Team names contain unsafe characters or exceed %d bytes.", MAX_TEAM_NAME)
+        cw_console(id, "Team names contain unsafe characters or exceed %d bytes.", MAX_TEAM_NAME)
         return PLUGIN_HANDLED
     }
     set_pcvar_string(g_CvarTeamAName, a); set_pcvar_string(g_CvarTeamBName, b)
@@ -288,7 +300,7 @@ public command_tags(id, level, cid)
     read_argv(1, a, charsmax(a)); read_argv(2, b, charsmax(b)); trim(a); trim(b)
     if ((a[0] && !valid_display_token(a, MAX_TEAM_TAG)) || (b[0] && !valid_display_token(b, MAX_TEAM_TAG)))
     {
-        console_print(id, "[KGB CW] Clan tags contain unsafe characters or exceed %d bytes.", MAX_TEAM_TAG)
+        cw_console(id, "Clan tags contain unsafe characters or exceed %d bytes.", MAX_TEAM_TAG)
         return PLUGIN_HANDLED
     }
     set_pcvar_string(g_CvarTeamATag, a); set_pcvar_string(g_CvarTeamBTag, b)
@@ -306,12 +318,12 @@ public command_maps(id, level, cid)
     strtolower(map1); strtolower(map2)
     if (!valid_map_token(map1) || (map2[0] && (!valid_map_token(map2) || equali(map1, map2))))
     {
-        console_print(id, "[KGB CW] Use one or two different installed map basenames.")
+        cw_console(id, "Use one or two different installed map basenames.")
         return PLUGIN_HANDLED
     }
     set_pcvar_string(g_CvarMap1, map1); set_pcvar_string(g_CvarMap2, map2)
     set_pcvar_num(g_CvarMapCount, map2[0] ? 2 : 1)
-    console_print(id, "[KGB CW] Maps: %s%s%s", map1, map2[0] ? ", " : "", map2)
+    cw_console(id, "Maps: %s%s%s", map1, map2[0] ? ", " : "", map2)
     return PLUGIN_HANDLED
 }
 
@@ -327,7 +339,7 @@ public command_status(id) { print_score(id, true); return PLUGIN_HANDLED; }
 public command_shield_purchase(id)
 {
     if (!g_ShieldRestricted) return PLUGIN_CONTINUE
-    client_print(id, print_chat, "[KGB CW] The tactical shield is restricted for this match.")
+    cw_chat(id, "The tactical shield is restricted for this match.")
     return PLUGIN_HANDLED
 }
 
@@ -384,7 +396,7 @@ public menu_knife_vote_handler(id, menu, item)
     menu_item_getinfo(menu, item, access, info, charsmax(info), label, charsmax(label), callback)
     g_KnifeVoted[id] = true
     if (str_to_num(info) == 2) g_KnifeSwapVotes++; else g_KnifeStayVotes++
-    client_print(id, print_chat, "[KGB CW] Vote recorded.")
+    cw_chat(id, "Vote recorded.")
     menu_destroy(menu)
     if (knife_vote_count() >= knife_eligible_count()) finish_knife_vote()
     return PLUGIN_HANDLED
@@ -494,13 +506,14 @@ public task_resume_crossmap()
 stock bool:mode_enabled(id)
 {
     if (get_pcvar_num(g_CvarEnabled)) return true
-    console_print(id, "[KGB CW] Controls are disabled by kgb_cw_enabled.")
+    cw_console(id, "Controls are disabled by kgb_cw_enabled.")
     return false
 }
 
 stock show_control_menu(id)
 {
-    new menu = menu_create("KGB Clan War", "menu_control_handler")
+    refresh_branding(false)
+    new menu = menu_create(g_DisplayName, "menu_control_handler")
     menu_additem(menu, "Start warmup", "1")
     menu_additem(menu, "Start knife round", "2")
     menu_additem(menu, "Start match (LO3)", "3")
@@ -620,21 +633,21 @@ stock set_player_ready(id, bool:isReady)
 {
     if (!is_user_connected(id) || g_State != STATE_WARMUP)
     {
-        client_print(id, print_chat, "[KGB CW] Ready status is available during warmup only."); return
+        cw_chat(id, "Ready status is available during warmup only."); return
     }
     if (g_ReadyMode == READY_ADMIN)
     {
-        client_print(id, print_chat, "[KGB CW] This match is started by an administrator."); return
+        cw_chat(id, "This match is started by an administrator."); return
     }
     if (g_ReadyMode == READY_TEAM) { set_team_ready(id, isReady); return; }
     new CsTeams:team = cs_get_user_team(id)
     if (team != CS_TEAM_T && team != CS_TEAM_CT)
     {
-        client_print(id, print_chat, "[KGB CW] Join a playing team first."); return
+        cw_chat(id, "Join a playing team first."); return
     }
     if (g_Ready[id] == isReady)
     {
-        client_print(id, print_chat, "[KGB CW] Your ready state is unchanged."); return
+        cw_chat(id, "Your ready state is unchanged."); return
     }
     g_Ready[id] = isReady
     new name[32]; get_user_name(id, name, charsmax(name))
@@ -646,14 +659,14 @@ stock set_team_ready(id, bool:isReady)
 {
     if (!is_user_connected(id) || g_State != STATE_WARMUP)
     {
-        client_print(id, print_chat, "[KGB CW] Team ready status is available during warmup only."); return
+        cw_chat(id, "Team ready status is available during warmup only."); return
     }
     if (g_ReadyMode != READY_TEAM)
     {
-        client_print(id, print_chat, "[KGB CW] Team-ready mode is not enabled."); return
+        cw_chat(id, "Team-ready mode is not enabled."); return
     }
     new identity = identity_for_side(cs_get_user_team(id))
-    if (identity < 0) { client_print(id, print_chat, "[KGB CW] Join a playing team first."); return; }
+    if (identity < 0) { cw_chat(id, "Join a playing team first."); return; }
     g_TeamReady[identity] = isReady
     announce("%s is now %s.", identity == 0 ? g_TeamAName : g_TeamBName, isReady ? "ready" : "not ready")
     check_auto_live()
@@ -1011,6 +1024,43 @@ stock bool:valid_display_token(const value[], maxLength)
     return true
 }
 
+stock refresh_branding(bool:logInvalid)
+{
+    new value[128]
+
+    get_pcvar_string(g_CvarDisplayName, value, charsmax(value)); trim(value)
+    if (valid_display_token(value, MAX_DISPLAY_NAME)) copy(g_DisplayName, charsmax(g_DisplayName), value)
+    else
+    {
+        copy(g_DisplayName, charsmax(g_DisplayName), DEFAULT_DISPLAY_NAME)
+        if (logInvalid) log_amx("Rejected unsafe or empty display name; using package default")
+    }
+
+    get_pcvar_string(g_CvarChatPrefix, value, charsmax(value)); trim(value)
+    if (valid_display_token(value, MAX_CHAT_PREFIX)) copy(g_ChatPrefix, charsmax(g_ChatPrefix), value)
+    else
+    {
+        copy(g_ChatPrefix, charsmax(g_ChatPrefix), DEFAULT_CHAT_PREFIX)
+        if (logInvalid) log_amx("Rejected unsafe or empty chat prefix; using package default")
+    }
+}
+
+stock cw_console(id, const format[], any:...)
+{
+    new message[MAX_BRANDED_MESSAGE + 1]
+    vformat(message, charsmax(message), format, 3)
+    refresh_branding(false)
+    console_print(id, "%s %s", g_ChatPrefix, message)
+}
+
+stock cw_chat(id, const format[], any:...)
+{
+    new message[MAX_BRANDED_MESSAGE + 1]
+    vformat(message, charsmax(message), format, 3)
+    refresh_branding(false)
+    client_print(id, print_chat, "%s %s", g_ChatPrefix, message)
+}
+
 stock snapshot_environment()
 {
     if (g_EnvironmentSaved) return
@@ -1205,8 +1255,8 @@ stock print_score(id, bool:detailed)
     state_name(stateText, charsmax(stateText)); get_format_name(format, charsmax(format)); get_side_name(g_TeamASide, side, charsmax(side))
     get_team_label(0, labelA, charsmax(labelA)); get_team_label(1, labelB, charsmax(labelB))
     if (detailed) formatex(detail, charsmax(detail), " | state=%s format=%s map=%d/%d half=%d overtime=%d side_a=%s", stateText, format, g_MapNumber, g_MapCount, g_Half, g_OvertimeCycle, side)
-    if (id == 0) console_print(0, "[KGB CW] %s %d - %d %s%s", labelA, total_score_a(), total_score_b(), labelB, detailed ? detail : "")
-    else client_print(id, print_chat, "[KGB CW] %s %d - %d %s%s", labelA, total_score_a(), total_score_b(), labelB, detailed ? detail : "")
+    if (id == 0) cw_console(0, "%s %d - %d %s%s", labelA, total_score_a(), total_score_b(), labelB, detailed ? detail : "")
+    else cw_chat(id, "%s %d - %d %s%s", labelA, total_score_a(), total_score_b(), labelB, detailed ? detail : "")
 }
 
 stock swap_players()
@@ -1334,9 +1384,10 @@ stock total_score_b() { return g_PreviousMapScoreB + g_TeamBScore; }
 
 stock announce(const format[], any:...)
 {
-    new message[190]
+    new message[MAX_BRANDED_MESSAGE + 1]
     vformat(message, charsmax(message), format, 2)
-    client_print(0, print_chat, "[KGB CW] %s", message); server_print("[KGB CW] %s", message)
+    refresh_branding(false)
+    client_print(0, print_chat, "%s %s", g_ChatPrefix, message); server_print("%s %s", g_ChatPrefix, message)
     if (get_pcvar_num(g_CvarHudAnnouncements))
     {
         set_hudmessage(0, 180, 255, -1.0, 0.18, 0, 1.0, 4.0, 0.1, 0.2, -1)

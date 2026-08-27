@@ -1,6 +1,12 @@
 ; KGB Clan War core configuration.
 ; Existing server configs are never overwritten by the installer.
 kgb_cw_enabled 1
+
+; In-game presentation. Unsafe, empty, or overlong values fall back to the
+; package defaults instead of being rendered.
+kgb_cw_display_name "KGB Clan War"
+kgb_cw_chat_prefix "[KGB CW]"
+
 kgb_cw_min_ready 10
 kgb_cw_ready_mode "player"
 kgb_cw_auto_live 0

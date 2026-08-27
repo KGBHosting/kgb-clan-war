@@ -10,11 +10,12 @@ credentials nor a database.
 
 ## Release policy
 
-`v1.0.0` is the first customer-stable release. Earlier `v0.x.x` tags were
-qualification builds used for CI and development-server testing. The stable
-core passed real ReHLDS and Valve Steam client qualification before promotion.
+`v0.2.0` is the current qualification release. The earlier stable-version
+candidate was withdrawn when configurable operator branding was added; do not
+deploy that candidate. Promote `v0.2.0` only after its CI and
+development-server qualification evidence is complete.
 
-The stable line includes the practical AMX Match Deluxe feature
+The qualification line includes the practical AMX Match Deluxe feature
 set: player/team/admin ready modes; max-round, win-limit, and time-limit
 formats; playout; knife stay/swap voting; team names and tags; one- or two-map
 matches; phase configs; match/half restart; PUG team randomization; optional
@@ -65,6 +66,11 @@ For a standalone server, download the required `.amxx` files and matching
 `.sha256` files from the same tagged release, verify each checksum, then copy
 the plugins into `cstrike/addons/amxmodx/plugins/`. Add the core and any chosen
 optional integrations to `cstrike/addons/amxmodx/configs/plugins.ini`.
+
+This is not restricted to KGB Hosting infrastructure. Server operators outside
+KGB Hosting may install, run, modify, and redistribute it under GPLv3-or-later,
+subject to that license's terms. See [License and branding](#license-and-branding)
+before using KGB names or visual identity in a third-party service.
 
 The source checkout also provides an idempotent installer. Its server root is
 the directory that contains `addons/`, normally `cstrike`:
@@ -121,6 +127,8 @@ The installer creates
 | CVAR | Default | Meaning |
 | --- | --- | --- |
 | `kgb_cw_enabled` | `1` | Enable core controls. |
+| `kgb_cw_display_name` | `KGB Clan War` | In-game control-menu title. |
+| `kgb_cw_chat_prefix` | `[KGB CW]` | Prefix for core chat, command feedback, score/status, and server announcements. |
 | `kgb_cw_min_ready` | `10` | Required ready players. |
 | `kgb_cw_ready_mode` | `player` | `player`, `team`, or `admin`. |
 | `kgb_cw_auto_live` | `0` | Automatically start after readiness. |
@@ -154,6 +162,21 @@ The installer creates
 | `kgb_cw_screenshots` | `0` | Request halftime/final screenshots. |
 | `kgb_cw_file_stats` | `1` | Write local lifecycle statistics. |
 | `kgb_cw_hud_announcements` | `1` | Show match HUD announcements. |
+
+Brand values are trimmed and limited to visible ASCII: 47 bytes for the display
+name and 23 bytes for the chat prefix. Empty, overlong, or unsafe values
+containing command/control metacharacters are rejected at render time and fall
+back to the defaults above. A branding change therefore takes effect without
+reloading the plugin, while malformed input cannot be passed to server
+commands. For example, an independent league could set:
+
+```cfg
+kgb_cw_display_name "Example League Match"
+kgb_cw_chat_prefix "[MATCH]"
+```
+
+These settings change presentation only: plugin metadata, authorship, command
+names, CVAR names, artifact names, and the license remain unchanged.
 
 `kgb_cw_state` and the three `*_version` CVARs are runtime status values, not
 operator settings. The complete examples are in [`configs/`](configs/).
@@ -189,7 +212,7 @@ first four bytes are not the AMXX `XXMA` magic used by the Panel artifact gate.
 ./scripts/check-source-capabilities.sh
 ./scripts/check-compatibility.sh
 ./scripts/test-install.sh
-./scripts/package.sh v1.0.0
+./scripts/package.sh v0.2.0
 ```
 
 Compatibility checks compile all three plugins against AMX Mod X `1.8.2`,
@@ -205,15 +228,24 @@ checksum verification before creating a release.
 - `kgb_clan_war.amxx` and `kgb_clan_war.amxx.sha256`
 - `kgb_clan_war_hltv.amxx` and `kgb_clan_war_hltv.amxx.sha256`
 - `kgb_clan_war_sql.amxx` and `kgb_clan_war_sql.amxx.sha256`
-- `kgb-clan-war-v1.0.0.zip` and `kgb-clan-war-v1.0.0.zip.sha256`
+- `kgb-clan-war-v0.2.0.zip` and `kgb-clan-war-v0.2.0.zip.sha256`
 
 The ZIP is the convenience distribution: binaries, checksums, safe config
 examples, corresponding source, build/install scripts, license, and security
 policy. Individual binaries remain available for plugin-manager ingestion.
 
-## License
+## License and branding
 
 Copyright (C) 2026 KGB Hosting.
 
 KGB Clan War is free software licensed under the GNU General Public License
 version 3 or, at your option, any later version. See [LICENSE](LICENSE).
+The GPL covers the source and binaries and allows third-party operators to use
+and redistribute them under its terms. It does not grant trademark rights in
+the KGB Hosting name, logos, or other brand assets, or permission to imply that
+a third-party service is operated, endorsed, or supported by KGB Hosting.
+
+The default `KGB Clan War` and `[KGB CW]` strings identify the upstream plugin.
+Independent operators can set `kgb_cw_display_name` and
+`kgb_cw_chat_prefix` to their own truthful presentation without removing
+copyright, authorship, or license notices.
