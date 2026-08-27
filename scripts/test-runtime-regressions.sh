@@ -69,11 +69,42 @@ require_string "$CORE" 'stock bool:restore_rejected_crossmap_state()'
 require_string "$CORE" 'g_EnvironmentSaved = true'
 require_string "$CORE" 'restore_environment()'
 require_string "$CORE" 'set_pcvar_num(g_CvarClientDemos, legacyClient)'
-require_string "$CORE" 'set_localinfo(LI_RECOVERY_PENDING, complete ? "" : "1")'
-require_string "$CORE" 'clear_crossmap_state(!recoveryComplete)'
+require_string "$CORE" 'set_localinfo(LI_RECOVERY_PENDING, "1")'
+require_string "$CORE" 'else finalize_crossmap_recovery()'
+require_string "$CORE" 'stock finalize_crossmap_recovery()'
+require_string "$CORE" 'clear_crossmap_storage(true)'
+require_string "$CORE" 'stock clear_crossmap_recovery_storage()'
 require_string "$CORE" 'Cross-map baseline recovery remains pending; unresolved evidence was preserved'
 require_string "$CORE" 'set_localinfo(LI_OLD_SHIELD, ""); set_localinfo(LI_ENV_SAVED, "done")'
 require_string "$CORE" 'set_localinfo(LI_LEGACY_CLIENT, "done")'
+require_string "$CORE" '#define LI_RECOVERY_ID "_kgbcw_recovery_id"'
+require_string "$CORE" 'set_localinfo(LI_RECOVERY_ID, g_MatchId)'
+require_string "$CORE" '!valid_match_id_exact(recoveryId) || !equal(recoveryId, storedMatchId)'
+require_string "$CORE" 'new bool:keepRecovery = preserveRecovery || crossmap_recovery_pending()'
+require_string "$CORE" 'set_localinfo(LI_MATCH_ID, ""); set_localinfo(LI_RECOVERY_ID, "")'
+require_string "$CORE" 'Refused to overwrite pending cross-map baseline recovery'
+require_string "$CORE" 'Refused to stop match while cross-map baseline recovery is pending'
+require_string "$CORE" 'Refused to finish match while cross-map baseline recovery is pending'
+require_string "$CORE" 'register_concmd("amx_cw_recover", "command_recover", ADMIN_CFG'
+require_string "$CORE" 'stock bool:crossmap_recovery_pending()'
+require_string "$CORE" 'if (crossmap_recovery_pending() || !base_control_config_valid()) return false'
+persist_guard_line="$(awk '/stock bool:persist_crossmap_state\(\)/,/stock bool:parse_crossmap_envelope\(\)/ { if (index($0, "crossmap_recovery_pending()")) { print NR; exit } }' "$CORE")"
+persist_write_line="$(awk '/stock bool:persist_crossmap_state\(\)/,/stock bool:parse_crossmap_envelope\(\)/ { if (index($0, "set_localinfo(LI_RECOVERY_ID, g_MatchId)")) { print NR; exit } }' "$CORE")"
+stop_guard_line="$(awk '/stock stop_match\(bool:administrator\)/,/stock restart_current_half\(\)/ { if (index($0, "crossmap_recovery_pending()")) { print NR; exit } }' "$CORE")"
+stop_clear_line="$(awk '/stock stop_match\(bool:administrator\)/,/stock restart_current_half\(\)/ { if (index($0, "clear_crossmap_state()")) { print NR; exit } }' "$CORE")"
+finish_guard_line="$(awk '/stock finish_match\(bool:stopped/,/stock bool:valid_mapcycle_filename/ { if (index($0, "crossmap_recovery_pending()")) { print NR; exit } }' "$CORE")"
+finish_clear_line="$(awk '/stock finish_match\(bool:stopped/,/stock bool:valid_mapcycle_filename/ { if (index($0, "clear_crossmap_state()")) { print NR; exit } }' "$CORE")"
+storage_active_clear_line="$(awk '/stock clear_crossmap_storage\(bool:keepRecovery\)/,/stock bool:crossmap_recovery_pending\(\)/ { if (index($0, "set_localinfo(LI_ACTIVE, \"\")")) { print NR; exit } }' "$CORE")"
+storage_pending_clear_line="$(awk '/stock clear_crossmap_storage\(bool:keepRecovery\)/,/stock bool:crossmap_recovery_pending\(\)/ { if (index($0, "set_localinfo(LI_RECOVERY_PENDING, \"\")")) { print NR; exit } }' "$CORE")"
+finalize_invalidate_line="$(awk '/stock finalize_crossmap_recovery\(\)/,/stock clear_crossmap_storage\(bool:keepRecovery\)/ { if (index($0, "clear_crossmap_storage(true)")) { print NR; exit } }' "$CORE")"
+finalize_commit_line="$(awk '/stock finalize_crossmap_recovery\(\)/,/stock clear_crossmap_storage\(bool:keepRecovery\)/ { if (index($0, "set_localinfo(LI_RECOVERY_PENDING, \"\")")) { print NR; exit } }' "$CORE")"
+finalize_gc_line="$(awk '/stock finalize_crossmap_recovery\(\)/,/stock clear_crossmap_storage\(bool:keepRecovery\)/ { if (index($0, "clear_crossmap_recovery_storage()")) { print NR; exit } }' "$CORE")"
+test -n "$persist_guard_line" && test -n "$persist_write_line" && test "$persist_guard_line" -lt "$persist_write_line"
+test -n "$stop_guard_line" && test -n "$stop_clear_line" && test "$stop_guard_line" -lt "$stop_clear_line"
+test -n "$finish_guard_line" && test -n "$finish_clear_line" && test "$finish_guard_line" -lt "$finish_clear_line"
+test -n "$storage_active_clear_line" && test -n "$storage_pending_clear_line" && test "$storage_active_clear_line" -lt "$storage_pending_clear_line"
+test -n "$finalize_invalidate_line" && test -n "$finalize_commit_line" && test -n "$finalize_gc_line"
+test "$finalize_invalidate_line" -lt "$finalize_commit_line" && test "$finalize_commit_line" -lt "$finalize_gc_line"
 if grep -Fq 'legacyHltvEnabled >= 0 && !cvar_exists("kgb_cw_hltv_enabled")' "$CORE"; then
 	printf 'Missing optional HLTV CVAR still aborts independent cross-map recovery.\n' >&2
 	exit 1
@@ -125,6 +156,49 @@ runtime_client_demos="$baseline_client_demos"
 if test "$hltv_cvars_available" -ne 1; then recovery_pending=1; fi
 test "$runtime_hostname|$runtime_password|$runtime_shield|$runtime_client_demos" = 'Customer Server|customer-secret|1|0'
 test "$recovery_pending|$pending_hltv_enabled|$pending_hltv_auto" = '1|1|0'
+
+# Model the identity-bound recovery lock. Generic clear(true), stop, finish,
+# persist/new-series, and unrelated resume attempts all preserve the pending
+# journal. Only a complete identity-matched recovery may clear it.
+journal_pending=0
+journal_match_id=20260827_120000
+journal_recovery_id=20260827_120000
+journal_environment='Customer Server|customer-secret|1'
+journal_recording='0|1|0'
+journal_active=1
+generic_clear() {
+	local preserve="$1"
+	if test "$preserve" -eq 1 || test "$journal_pending" -eq 1; then return; fi
+	journal_match_id=''; journal_recovery_id=''; journal_environment=''; journal_recording=''
+}
+attempt_stop() { test "$journal_pending" -eq 1 && return; generic_clear 0; }
+attempt_finish() { test "$journal_pending" -eq 1 && return; generic_clear 0; }
+attempt_persist() { test "$journal_pending" -eq 1 && return 1; return 0; }
+attempt_unrelated_resume() { test "$journal_pending" -eq 1 && return 1; return 0; }
+original_journal="$journal_match_id|$journal_recovery_id|$journal_environment|$journal_recording"
+generic_clear 1
+test "$journal_match_id|$journal_recovery_id|$journal_environment|$journal_recording" = "$original_journal"
+journal_pending=1
+attempt_stop
+test "$journal_match_id|$journal_recovery_id|$journal_environment|$journal_recording" = "$original_journal"
+attempt_finish
+test "$journal_match_id|$journal_recovery_id|$journal_environment|$journal_recording" = "$original_journal"
+if attempt_persist; then printf 'Pending recovery allowed a new envelope overwrite.\n' >&2; exit 1; fi
+if attempt_unrelated_resume; then printf 'Pending recovery allowed an unrelated resume.\n' >&2; exit 1; fi
+test "$journal_match_id" = "$journal_recovery_id"
+# A completed restore retains identity, pending, and durable done markers until
+# finalization. If interrupted here, the next load retries safely. Finalization
+# invalidates active first, commits by clearing pending, then garbage-collects
+# harmless stale payload.
+journal_environment=done
+journal_recording=done
+test "$journal_pending|$journal_active|$journal_match_id|$journal_environment|$journal_recording" = \
+	'1|1|20260827_120000|done|done'
+journal_active=0
+journal_pending=0
+journal_match_id=''; journal_recovery_id=''; journal_environment=''; journal_recording=''
+test -z "$journal_match_id$journal_recovery_id$journal_environment$journal_recording"
+test "$journal_active|$journal_pending" = '0|0'
 
 # TL expiry has an explicit no-winner Round_End path, and all terminal half
 # paths capture before the regulation/OT transition.
@@ -286,7 +360,7 @@ test "$legacy_restore_line" -gt "$legacy_validate_line"
 # unwinding the currently active recording override. Invalid ready mode, swap
 # policy, map topology, phase config, or bounded numeric/boolean setting must
 # preserve the whole prior tuple.
-short_runtime_line="$(awk '/public command_legacy_match\(id, level, cid\)/,/public command_legacy_match2\(id, level, cid\)/ { if (index($0, "full_runtime_config_valid(false)")) { print NR; exit } }' "$CORE")"
+short_runtime_line="$(awk '/public command_legacy_match\(id, level, cid\)/,/public command_legacy_match2\(id, level, cid\)/ { if (index($0, "full_runtime_config_valid(true)")) { print NR; exit } }' "$CORE")"
 short_restore_line="$(awk '/public command_legacy_match\(id, level, cid\)/,/public command_legacy_match2\(id, level, cid\)/ { if (index($0, "restore_legacy_record_mode()")) { print NR; exit } }' "$CORE")"
 full_runtime_line="$(awk '/stock bool:configure_legacy_match\(/,/stock bool:apply_legacy_rule\(/ { if (index($0, "full_runtime_config_valid(false)")) { print NR; exit } }' "$CORE")"
 full_restore_line="$(awk '/stock bool:configure_legacy_match\(/,/stock bool:apply_legacy_rule\(/ { if (index($0, "restore_legacy_record_mode()")) { print NR; exit } }' "$CORE")"
@@ -295,6 +369,10 @@ test -n "$full_runtime_line" && test -n "$full_restore_line" && test "$full_runt
 require_string "$CORE" 'restore_legacy_snapshot(oldLegacyOverride, oldCurrentClientDemos,'
 require_string "$CORE" 'restore_managed_config_snapshot()'
 require_string "$CORE" 'stock bool:full_runtime_config_valid(bool:requireStartingMap)'
+require_string "$CORE" 'if (crossmap_recovery_pending() || !base_control_config_valid()) return false'
+require_string "$CORE" 'stock bool:base_control_config_valid()'
+require_string "$CORE" 'get_pcvar_string(g_CvarEnabled, value, charsmax(value))'
+require_string "$CORE" 'get_pcvar_string(g_CvarAllowMenuSave, value, charsmax(value))'
 require_string "$CORE" 'index < sizeof g_ManagedConfigNames'
 require_string "$CORE" 'if (!managed_config_value_valid(index, value)) return false'
 require_string "$CORE" 'index < sizeof g_SeriesExtraConfigNames'
@@ -324,6 +402,9 @@ replacement_valid() {
 	test "${10}" -ge 800 && test "${10}" -le 16000 || return 1
 	test "${11}" -ge 5 && test "${11}" -le 30 || return 1
 	case "${12}" in 0 | 1) ;; *) return 1 ;; esac
+	test "$4" = "${13}" || return 1
+	case "${14}" in 0 | 1) ;; *) return 1 ;; esac
+	case "${15}" in 0 | 1) ;; *) return 1 ;; esac
 }
 attempt_invalid_replacement() {
 	local label="$1"
@@ -338,16 +419,19 @@ attempt_invalid_replacement() {
 		exit 1
 	}
 }
-attempt_invalid_replacement ready broken halves 1 de_dust2 '' 1 15 5 0 10000 15 1
-attempt_invalid_replacement swap player broken 1 de_dust2 '' 1 15 5 0 10000 15 1
-attempt_invalid_replacement topology player halves 2 de_dust2 de_dust2 1 15 5 0 10000 15 1
-attempt_invalid_replacement phase player halves 1 de_dust2 '' 0 15 5 0 10000 15 1
-attempt_invalid_replacement half_rounds player halves 1 de_dust2 '' 1 0 5 0 10000 15 1
-attempt_invalid_replacement halftime_delay player halves 1 de_dust2 '' 1 15 0 0 10000 15 1
-attempt_invalid_replacement client_demos player halves 1 de_dust2 '' 1 15 5 2 10000 15 1
-attempt_invalid_replacement overtime_money player halves 1 de_dust2 '' 1 15 5 0 799 15 1
-attempt_invalid_replacement overtime_vote_seconds player halves 1 de_dust2 '' 1 15 5 0 10000 4 1
-attempt_invalid_replacement boolean player halves 1 de_dust2 '' 1 15 5 0 10000 15 2
+attempt_invalid_replacement ready broken halves 1 de_dust2 '' 1 15 5 0 10000 15 1 de_dust2 1 0
+attempt_invalid_replacement swap player broken 1 de_dust2 '' 1 15 5 0 10000 15 1 de_dust2 1 0
+attempt_invalid_replacement topology player halves 2 de_dust2 de_dust2 1 15 5 0 10000 15 1 de_dust2 1 0
+attempt_invalid_replacement phase player halves 1 de_dust2 '' 0 15 5 0 10000 15 1 de_dust2 1 0
+attempt_invalid_replacement half_rounds player halves 1 de_dust2 '' 1 0 5 0 10000 15 1 de_dust2 1 0
+attempt_invalid_replacement halftime_delay player halves 1 de_dust2 '' 1 15 0 0 10000 15 1 de_dust2 1 0
+attempt_invalid_replacement client_demos player halves 1 de_dust2 '' 1 15 5 2 10000 15 1 de_dust2 1 0
+attempt_invalid_replacement overtime_money player halves 1 de_dust2 '' 1 15 5 0 799 15 1 de_dust2 1 0
+attempt_invalid_replacement overtime_vote_seconds player halves 1 de_dust2 '' 1 15 5 0 10000 4 1 de_dust2 1 0
+attempt_invalid_replacement boolean player halves 1 de_dust2 '' 1 15 5 0 10000 15 2 de_dust2 1 0
+attempt_invalid_replacement start_map player halves 1 de_nuke '' 1 15 5 0 10000 15 1 de_dust2 1 0
+attempt_invalid_replacement enabled player halves 1 de_dust2 '' 1 15 5 0 10000 15 1 de_dust2 2 0
+attempt_invalid_replacement menu_save player halves 1 de_dust2 '' 1 15 5 0 10000 15 1 de_dust2 1 2
 
 require_string "$CORE" 'g_CvarFileStats = register_cvar("kgb_cw_file_stats", "0")'
 

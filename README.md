@@ -139,6 +139,7 @@ access flag.
 | `amx_cw_tags <tag-a> <tag-b>` | Set clan tags. |
 | `amx_cw_maps <map1> [map2]` | Select one or two installed maps. |
 | `amx_cw_stop` | Stop the match and restore the captured server environment. |
+| `amx_cw_recover` | Retry a pending cross-map baseline recovery. The journal is cleared only after every recoverable environment/access and recording baseline is restored. |
 | `amx_cw_score` | Show the public match score. |
 | `amx_cw_scoreids` | Print detailed score and player SteamIDs to an authorized admin's console only. |
 | `amx_cw_scoreids_snapshot` | Show an authorized admin the current score/SteamID MOTD, then request one screenshot when explicitly enabled. |
@@ -221,6 +222,12 @@ values apply to the next series. This includes scoring, ready/swap/overtime,
 playout, screenshots/file statistics, phase configs, environment changes,
 client demos, and HLTV recording policy.
 
+Every launch validates the complete managed/series policy plus the
+user-controlled base booleans `kgb_cw_enabled` and
+`kgb_cw_allow_menu_save` before it mutates match or legacy-recording state.
+`kgb_cw_version` and `kgb_cw_state` are excluded intentionally: they are
+plugin-owned version/runtime-status outputs, not operator launch inputs.
+
 Brand values are trimmed and limited to visible ASCII: 47 bytes for the display
 name and 23 bytes for the chat prefix. Empty, overlong, or unsafe values
 containing command/control metacharacters are rejected at render time and fall
@@ -250,6 +257,16 @@ before the stale envelope is cleared. Recovery domains are independent: if an
 optional HLTV CVAR is unavailable on map two, access/environment and client-demo
 baselines are still restored immediately, while the unresolved validated HLTV
 baseline remains explicitly marked in local state for a later plugin/map load.
+The recovery journal is bound to its original match identifier. While it is
+pending, new/configuration/resume/admin lifecycle flows are locked and cannot
+overwrite or clear its evidence. After the missing plugin/CVAR is available, an
+`ADMIN_CFG` operator can run `amx_cw_recover`; it clears the stale envelope only
+after the complete bound baseline has been restored. There is no force-discard
+command that could leave a temporary hostname, password, shield, or recording
+policy active. Successful recovery keeps durable handled markers until a
+dedicated finalizer invalidates the stale active envelope. It then removes the
+pending marker as the commit point before garbage-collecting harmless stale
+payload, so an interruption is either retryable or already safely committed.
 
 Persistent PUG completion follows the server's `mapcyclefile`: the next valid,
 installed map after the current map becomes map one and the following distinct

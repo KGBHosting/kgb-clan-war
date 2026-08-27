@@ -70,6 +70,7 @@
 #define LI_LEGACY_HLTV_ENABLED "_kgbcw_legacy_he"
 #define LI_LEGACY_HLTV_AUTO "_kgbcw_legacy_ha"
 #define LI_RECOVERY_PENDING "_kgbcw_recovery"
+#define LI_RECOVERY_ID "_kgbcw_recovery_id"
 #define LI_PUG_RESUME "_kgbcw_pug_resume"
 #define LI_PUG_NEXT "_kgbcw_pug_next"
 #define LI_PUG_FOLLOWING "_kgbcw_pug_follow"
@@ -276,6 +277,7 @@ public plugin_init()
     register_concmd("amx_cw_tags", "command_tags", ADMIN_CFG, "<tag-a> <tag-b>")
     register_concmd("amx_cw_maps", "command_maps", ADMIN_CFG, "<map1> [map2]")
     register_concmd("amx_cw_stop", "command_stop", ADMIN_CFG, "- stop and restore server")
+    register_concmd("amx_cw_recover", "command_recover", ADMIN_CFG, "- safely retry pending cross-map baseline recovery")
     register_concmd("amx_cw_score", "command_score", 0, "- show score")
     register_concmd("amx_cw_scoreids", "command_scoreids", ADMIN_CFG, "- show score and player SteamIDs in the admin console")
     register_concmd("amx_cw_scoreids_snapshot", "command_scoreids_snapshot", ADMIN_CFG, "- show score/SteamIDs and request an admin screenshot")
@@ -527,6 +529,11 @@ public command_pug_assign(id, level, cid)
 public command_pug_stop(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 1)) return PLUGIN_HANDLED
+    if (crossmap_recovery_pending())
+    {
+        cw_console_ml(id, "CW_ERR_RECOVERY_PENDING")
+        return PLUGIN_HANDLED
+    }
     if (!g_PugActive) cw_console_ml(id, "CW_ERR_NO_PUG")
     else
     {
@@ -657,7 +664,31 @@ public command_maps(id, level, cid)
 
 public command_stop(id, level, cid)
 {
-    if (cmd_access(id, level, cid, 1)) stop_match(true)
+    if (!cmd_access(id, level, cid, 1)) return PLUGIN_HANDLED
+    if (crossmap_recovery_pending())
+    {
+        cw_console_ml(id, "CW_ERR_RECOVERY_PENDING")
+        return PLUGIN_HANDLED
+    }
+    stop_match(true)
+    return PLUGIN_HANDLED
+}
+
+public command_recover(id, level, cid)
+{
+    if (!cmd_access(id, level, cid, 1)) return PLUGIN_HANDLED
+    if (!crossmap_recovery_pending())
+    {
+        cw_console_ml(id, "CW_RECOVERY_NONE")
+        return PLUGIN_HANDLED
+    }
+    if (!restore_rejected_crossmap_state())
+    {
+        cw_console_ml(id, "CW_ERR_RECOVERY_PENDING")
+        return PLUGIN_HANDLED
+    }
+    finalize_crossmap_recovery()
+    cw_console_ml(id, "CW_RECOVERY_COMPLETE")
     return PLUGIN_HANDLED
 }
 
@@ -742,7 +773,7 @@ public command_legacy_match(id, level, cid)
         }
     }
     set_pcvar_string(g_CvarTeamAName, teamA); set_pcvar_string(g_CvarTeamBName, teamB)
-    if (!full_runtime_config_valid(false))
+    if (!full_runtime_config_valid(true))
     {
         restore_managed_config_snapshot()
         cw_console_ml(id, "CW_ERR_LEGACY_START")
@@ -1019,12 +1050,18 @@ public command_say(id)
     if (equali(text, "/score") || equali(text, "!score")) { print_score(id, false); return PLUGIN_HANDLED; }
     if ((equali(text, "/relo3") || equali(text, "!relo3")) && (get_user_flags(id) & ADMIN_CFG))
     {
+        if (!mode_enabled(id)) return PLUGIN_HANDLED
         if (g_State == STATE_LIVE) begin_lo3(false)
         else cw_chat_ml(id, "CW_ERR_NOT_LIVE")
         return PLUGIN_HANDLED
     }
     if ((equali(text, "/stop") || equali(text, "!stop")) && (get_user_flags(id) & ADMIN_CFG))
     {
+        if (crossmap_recovery_pending())
+        {
+            cw_console_ml(id, "CW_ERR_RECOVERY_PENDING")
+            return PLUGIN_HANDLED
+        }
         stop_match(true)
         return PLUGIN_HANDLED
     }
@@ -1039,13 +1076,20 @@ public command_say(id)
     }
     if (equali(text, "/cw") || equali(text, "!cw"))
     {
-        if (get_user_flags(id) & ADMIN_CFG) show_control_menu(id); else print_score(id, false)
+        if (get_user_flags(id) & ADMIN_CFG)
+        {
+            if (mode_enabled(id)) show_control_menu(id)
+        }
+        else print_score(id, false)
         return PLUGIN_HANDLED
     }
     if ((equali(text, "/start") || equali(text, "!start")) && (get_user_flags(id) & ADMIN_CFG))
     {
-        if (g_State == STATE_HALF_READY) resume_ready_half()
-        else start_live_match(g_State == STATE_WARMUP && g_KnifeDecisionMade)
+        if (mode_enabled(id))
+        {
+            if (g_State == STATE_HALF_READY) resume_ready_half()
+            else start_live_match(g_State == STATE_WARMUP && g_KnifeDecisionMade)
+        }
         return PLUGIN_HANDLED
     }
     return PLUGIN_CONTINUE
@@ -1053,7 +1097,7 @@ public command_say(id)
 
 public menu_control_handler(id, menu, item)
 {
-    if (item == MENU_EXIT || !(get_user_flags(id) & ADMIN_CFG) || !get_pcvar_num(g_CvarEnabled))
+    if (item == MENU_EXIT || !(get_user_flags(id) & ADMIN_CFG) || !get_pcvar_num(g_CvarEnabled) || crossmap_recovery_pending())
     {
         menu_destroy(menu)
         return PLUGIN_HANDLED
@@ -1442,9 +1486,15 @@ public task_resume_crossmap()
 {
     new active[4], recoveryPending[4]
     get_localinfo(LI_RECOVERY_PENDING, recoveryPending, charsmax(recoveryPending))
-    if (equal(recoveryPending, "1") && !restore_rejected_crossmap_state())
+    if (equal(recoveryPending, "1"))
     {
-        log_amx("Cross-map baseline recovery remains pending; unresolved evidence was preserved")
+        if (!restore_rejected_crossmap_state())
+            log_amx("Cross-map baseline recovery remains pending; unresolved evidence was preserved")
+        else
+        {
+            finalize_crossmap_recovery()
+            log_amx("Completed pending cross-map baseline recovery; stale match state was discarded")
+        }
         return
     }
 
@@ -1460,8 +1510,11 @@ public task_resume_crossmap()
         log_amx("Rejected stale or invalid cross-map match state")
         new bool:recoveryComplete = restore_rejected_crossmap_state()
         if (!recoveryComplete)
+        {
             log_amx("Cross-map baseline recovery is incomplete; unresolved evidence was preserved")
-        clear_crossmap_state(!recoveryComplete)
+            clear_crossmap_state(true)
+        }
+        else finalize_crossmap_recovery()
         return
     }
     commit_crossmap_envelope()
@@ -1475,6 +1528,11 @@ public task_resume_crossmap()
 
 stock bool:mode_enabled(id)
 {
+    if (crossmap_recovery_pending())
+    {
+        cw_console_ml(id, "CW_ERR_RECOVERY_PENDING")
+        return false
+    }
     if (get_pcvar_num(g_CvarEnabled)) return true
     cw_console_ml(id, "CW_ERR_DISABLED")
     return false
@@ -1668,6 +1726,11 @@ stock show_map_menu(id)
 
 stock bool:safe_configuration_state(id)
 {
+    if (crossmap_recovery_pending())
+    {
+        cw_console_ml(id, "CW_ERR_RECOVERY_PENDING")
+        return false
+    }
     if (g_State == STATE_OFF || g_State == STATE_WARMUP) return true
     cw_console_ml(id, "CW_ERR_CONFIG_STATE")
     return false
@@ -2294,6 +2357,11 @@ stock close_active_lifecycle(const statsEvent[])
 
 stock stop_match(bool:administrator)
 {
+    if (crossmap_recovery_pending())
+    {
+        log_amx("Refused to stop match while cross-map baseline recovery is pending")
+        return
+    }
     cancel_transition_tasks()
     g_PugActive = false
     new bool:hadActiveMatch = g_State == STATE_LIVE || g_State == STATE_HALFTIME || g_State == STATE_HALF_READY || g_State == STATE_OVERTIME_VOTE || g_State == STATE_PLAYOUT_VOTE
@@ -2666,6 +2734,11 @@ stock begin_map_transition()
 
 stock finish_match(bool:stopped, bool:screenshotTaken = false)
 {
+    if (crossmap_recovery_pending())
+    {
+        log_amx("Refused to finish match while cross-map baseline recovery is pending")
+        return
+    }
     cancel_transition_tasks(); set_cw_state(STATE_FINISHED)
     new bool:resumePug = g_PugActive && series_managed_number(MC_PUG_PERSIST, g_CvarPugPersist)
     new resumePugStyle[16]
@@ -2924,10 +2997,13 @@ stock randomize_pug_teams()
     announce_ml("CW_PUG_RANDOMIZED", count); audit_event("pug_randomized")
 }
 
-/* Validate every release-managed CVAR and relationship using temporary values
- * only. Rejected transitions cannot mutate runtime globals or CVARs. */
+/* Validate every operator-configurable launch input and relationship using
+ * temporary values only. Rejected transitions cannot mutate runtime globals
+ * or CVARs. Version/state are plugin-owned status outputs, not launch input. */
 stock bool:full_runtime_config_valid(bool:requireStartingMap)
 {
+    if (crossmap_recovery_pending() || !base_control_config_valid()) return false
+
     new cvarName[64], value[SERIES_MANIFEST_VALUE_MAX + 1]
     for (new index = 0; index < sizeof g_ManagedConfigNames; index++)
     {
@@ -2962,6 +3038,18 @@ stock bool:full_runtime_config_valid(bool:requireStartingMap)
         if (!equali(current, map1)) return false
     }
     return true
+}
+
+/* These are the only user-configurable base/control CVARs outside the
+ * immutable series arrays. kgb_cw_version and kgb_cw_state are plugin-owned
+ * status outputs and therefore are deliberately not launch inputs. */
+stock bool:base_control_config_valid()
+{
+    new value[8], number
+    get_pcvar_string(g_CvarEnabled, value, charsmax(value)); trim(value)
+    if (!parse_bool_exact(value, number)) return false
+    get_pcvar_string(g_CvarAllowMenuSave, value, charsmax(value)); trim(value)
+    return parse_bool_exact(value, number)
 }
 
 stock bool:load_runtime_settings(bool:crossmap)
@@ -3187,13 +3275,19 @@ stock restore_environment()
 
 stock bool:persist_crossmap_state()
 {
+    if (crossmap_recovery_pending())
+    {
+        log_amx("Refused to overwrite pending cross-map baseline recovery")
+        return false
+    }
     new value[32]
     set_localinfo(LI_ACTIVE, "")
     if (!persist_series_manifest()) return false
     set_localinfo(LI_MAP, g_Map2)
     num_to_str(g_TeamAScore, value, charsmax(value)); set_localinfo(LI_SCORE_A, value)
     num_to_str(g_TeamBScore, value, charsmax(value)); set_localinfo(LI_SCORE_B, value)
-    set_localinfo(LI_MATCH_ID, g_MatchId); set_localinfo(LI_OLD_HOST, g_OldHostname)
+    set_localinfo(LI_MATCH_ID, g_MatchId); set_localinfo(LI_RECOVERY_ID, g_MatchId)
+    set_localinfo(LI_OLD_HOST, g_OldHostname)
     set_localinfo(LI_OLD_PASS, g_OldPassword); set_localinfo(LI_OLD_SHIELD, g_OldShield)
     set_localinfo(LI_ENV_SAVED, g_EnvironmentSaved ? "1" : "0")
     num_to_str(_:g_TeamASide, value, charsmax(value)); set_localinfo(LI_TEAM_A_SIDE, value)
@@ -3214,7 +3308,8 @@ stock bool:persist_crossmap_state()
 stock bool:parse_crossmap_envelope()
 {
     new active[4], expected[MAX_MAP_TOKEN + 1], current[MAX_MAP_TOKEN + 1]
-    new storedMatchId[MAX_MATCH_ID + 1], scoreAValue[16], scoreBValue[16], envSaved[4]
+    new storedMatchId[MAX_MATCH_ID + 1], recoveryId[MAX_MATCH_ID + 1]
+    new scoreAValue[16], scoreBValue[16], envSaved[4]
     new oldHostname[128], oldPassword[64], oldShield[8], sideValue[8]
     new pugValue[4], pugStyle[16], legacyValue[4], legacyClientValue[8]
     new legacyHltvEnabledValue[8], legacyHltvAutoValue[8]
@@ -3223,6 +3318,7 @@ stock bool:parse_crossmap_envelope()
     get_localinfo(LI_ACTIVE, active, charsmax(active))
     get_localinfo(LI_MAP, expected, charsmax(expected)); get_mapname(current, charsmax(current))
     get_localinfo(LI_MATCH_ID, storedMatchId, charsmax(storedMatchId))
+    get_localinfo(LI_RECOVERY_ID, recoveryId, charsmax(recoveryId))
     get_localinfo(LI_SCORE_A, scoreAValue, charsmax(scoreAValue)); get_localinfo(LI_SCORE_B, scoreBValue, charsmax(scoreBValue))
     get_localinfo(LI_ENV_SAVED, envSaved, charsmax(envSaved))
     get_localinfo(LI_OLD_HOST, oldHostname, charsmax(oldHostname)); get_localinfo(LI_OLD_PASS, oldPassword, charsmax(oldPassword))
@@ -3234,6 +3330,7 @@ stock bool:parse_crossmap_envelope()
     get_localinfo(LI_LEGACY_HLTV_AUTO, legacyHltvAutoValue, charsmax(legacyHltvAutoValue))
 
     if (!equal(active, "1") || !parse_series_manifest() || !valid_match_id_exact(storedMatchId) ||
+        !valid_match_id_exact(recoveryId) || !equal(recoveryId, storedMatchId) ||
         !equal(storedMatchId, g_RestoreMatchId) || !valid_map_token(expected) || !equali(expected, current) ||
         !equali(expected, g_SeriesRestoreValues[_:MC_MAP2])) return false
     if (!parse_uint_exact(scoreAValue, 0, 1000, scoreA) || !parse_uint_exact(scoreBValue, 0, 1000, scoreB) ||
@@ -3300,11 +3397,20 @@ stock commit_crossmap_envelope()
 stock bool:restore_rejected_crossmap_state()
 {
     new recoveryPending[4], envSaved[4], oldHostname[128], oldPassword[64], oldShield[8], shield
+    new storedMatchId[MAX_MATCH_ID + 1], recoveryId[MAX_MATCH_ID + 1]
     new legacyValue[4], legacyClientValue[8], legacyHltvEnabledValue[8], legacyHltvAutoValue[8]
     new legacyActive, legacyClient, legacyHltvEnabled, legacyHltvAuto
     new bool:complete = true, bool:legacyComplete = true, bool:legacyValueRestored
     get_localinfo(LI_RECOVERY_PENDING, recoveryPending, charsmax(recoveryPending))
     new bool:wasPending = bool:equal(recoveryPending, "1")
+    get_localinfo(LI_MATCH_ID, storedMatchId, charsmax(storedMatchId))
+    get_localinfo(LI_RECOVERY_ID, recoveryId, charsmax(recoveryId))
+    if (!valid_match_id_exact(storedMatchId) || !valid_match_id_exact(recoveryId) || !equal(storedMatchId, recoveryId))
+    {
+        set_localinfo(LI_RECOVERY_PENDING, "1")
+        log_amx("Cross-map recovery identity is missing or mismatched; evidence was preserved")
+        return false
+    }
     get_localinfo(LI_ENV_SAVED, envSaved, charsmax(envSaved))
     get_localinfo(LI_OLD_HOST, oldHostname, charsmax(oldHostname)); get_localinfo(LI_OLD_PASS, oldPassword, charsmax(oldPassword))
     get_localinfo(LI_OLD_SHIELD, oldShield, charsmax(oldShield))
@@ -3411,33 +3517,59 @@ stock bool:restore_rejected_crossmap_state()
     }
     if (!legacyComplete) complete = false
     if (legacyValueRestored && legacyComplete) audit_event("legacy_record_mode_restored")
-    if (complete)
-    {
-        set_localinfo(LI_OLD_HOST, ""); set_localinfo(LI_OLD_PASS, "")
-        set_localinfo(LI_OLD_SHIELD, ""); set_localinfo(LI_ENV_SAVED, "")
-        set_localinfo(LI_LEGACY_RECORD, ""); set_localinfo(LI_LEGACY_CLIENT, "")
-        set_localinfo(LI_LEGACY_HLTV_ENABLED, ""); set_localinfo(LI_LEGACY_HLTV_AUTO, "")
-    }
-    set_localinfo(LI_RECOVERY_PENDING, complete ? "" : "1")
+    /* Keep the identity and handled markers journaled until the caller
+     * reaches the dedicated finalizer. A reload in this narrow
+     * interval safely retries the idempotent done-marked recovery. */
+    set_localinfo(LI_RECOVERY_PENDING, "1")
     return complete
 }
 
 stock clear_crossmap_state(bool:preserveRecovery = false)
 {
+    new bool:keepRecovery = preserveRecovery || crossmap_recovery_pending()
+    clear_crossmap_storage(keepRecovery)
+}
+
+/* This is the only path allowed to discard a pending recovery journal. Its
+ * callers have already restored every independently recoverable baseline.
+ * First invalidate the active envelope while the done-marked journal remains
+ * retryable. Clearing pending is the commit point; stale payload left by a
+ * later interruption is harmless and is overwritten by the next envelope. */
+stock finalize_crossmap_recovery()
+{
+    clear_crossmap_storage(true)
+    set_localinfo(LI_RECOVERY_PENDING, "")
+    clear_crossmap_recovery_storage()
+}
+
+stock clear_crossmap_storage(bool:keepRecovery)
+{
     set_localinfo(LI_ACTIVE, ""); set_localinfo(LI_MAP, "")
     clear_series_manifest_storage()
     set_localinfo(LI_SCORE_A, ""); set_localinfo(LI_SCORE_B, "")
-    set_localinfo(LI_MATCH_ID, "")
     set_localinfo(LI_TEAM_A_SIDE, "")
     set_localinfo(LI_PUG_ACTIVE, ""); set_localinfo(LI_PUG_STYLE, "")
-    if (!preserveRecovery)
+    if (!keepRecovery)
     {
-        set_localinfo(LI_OLD_HOST, ""); set_localinfo(LI_OLD_PASS, "")
-        set_localinfo(LI_OLD_SHIELD, ""); set_localinfo(LI_ENV_SAVED, "")
-        set_localinfo(LI_LEGACY_RECORD, ""); set_localinfo(LI_LEGACY_CLIENT, "")
-        set_localinfo(LI_LEGACY_HLTV_ENABLED, ""); set_localinfo(LI_LEGACY_HLTV_AUTO, "")
         set_localinfo(LI_RECOVERY_PENDING, "")
+        clear_crossmap_recovery_storage()
     }
+}
+
+stock clear_crossmap_recovery_storage()
+{
+    set_localinfo(LI_MATCH_ID, ""); set_localinfo(LI_RECOVERY_ID, "")
+    set_localinfo(LI_OLD_HOST, ""); set_localinfo(LI_OLD_PASS, "")
+    set_localinfo(LI_OLD_SHIELD, ""); set_localinfo(LI_ENV_SAVED, "")
+    set_localinfo(LI_LEGACY_RECORD, ""); set_localinfo(LI_LEGACY_CLIENT, "")
+    set_localinfo(LI_LEGACY_HLTV_ENABLED, ""); set_localinfo(LI_LEGACY_HLTV_AUTO, "")
+}
+
+stock bool:crossmap_recovery_pending()
+{
+    new value[4]
+    get_localinfo(LI_RECOVERY_PENDING, value, charsmax(value))
+    return bool:equal(value, "1")
 }
 
 stock create_match_id() { get_time("%Y%m%d_%H%M%S", g_MatchId, charsmax(g_MatchId)); }
