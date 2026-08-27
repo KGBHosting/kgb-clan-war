@@ -4,7 +4,7 @@
 #include <sqlx>
 
 #define PLUGIN_NAME "KGB Clan War: SQL"
-#define PLUGIN_VERSION "0.1.1"
+#define PLUGIN_VERSION "1.0.0"
 #define PLUGIN_AUTHOR "KGB Hosting"
 
 #define EVENT_QUEUE_MAX 16
@@ -107,7 +107,7 @@ public client_disconnect(id)
 }
 
 /**
- * Public forward emitted by KGB Clan War 0.x qualification builds.
+ * Public forward emitted by compatible KGB Clan War core releases.
  * Credentials come exclusively from AMX Mod X's standard sql.cfg through
  * SQL_MakeStdTuple(); this plugin contains no database credentials.
  */
