@@ -724,13 +724,52 @@ public command_legacy_match(id, level, cid)
         cw_console_ml(id, "CW_ERR_PRESET_INVALID")
         return PLUGIN_HANDLED
     }
-    restore_legacy_record_mode()
-    if (preset[0] && !apply_preset(id, preset)) return PLUGIN_HANDLED
-    set_pcvar_string(g_CvarTeamAName, teamA); set_pcvar_string(g_CvarTeamBName, teamB)
-    if (!start_warmup(true))
+
+    /* Stage the complete replacement while the current recording override is
+     * still intact. A syntactically valid preset can still be incompatible
+     * with current map topology, phase configs, or other runtime settings. */
+    snapshot_managed_config()
+    if (preset[0])
     {
+        new configsDir[128], presetPath[224]
+        get_configsdir(configsDir, charsmax(configsDir))
+        formatex(presetPath, charsmax(presetPath), "%s/kgb_clan_war/presets/%s.cfg", configsDir, preset)
+        if (!apply_managed_config_file(presetPath, true))
+        {
+            cw_console_ml(id, "CW_ERR_PRESET_INVALID")
+            return PLUGIN_HANDLED
+        }
+    }
+    set_pcvar_string(g_CvarTeamAName, teamA); set_pcvar_string(g_CvarTeamBName, teamB)
+    if (!runtime_config_valid(false))
+    {
+        restore_managed_config_snapshot()
         cw_console_ml(id, "CW_ERR_LEGACY_START")
         return PLUGIN_HANDLED
+    }
+
+    new bool:oldLegacyOverride = g_LegacyRecordOverride
+    new oldCurrentClientDemos = get_pcvar_num(g_CvarClientDemos)
+    new bool:oldHasHltvEnabled = bool:cvar_exists("kgb_cw_hltv_enabled")
+    new bool:oldHasHltvAuto = bool:cvar_exists("kgb_cw_hltv_auto_record")
+    new oldCurrentHltvEnabled = oldHasHltvEnabled ? get_cvar_num("kgb_cw_hltv_enabled") : 0
+    new oldCurrentHltvAuto = oldHasHltvAuto ? get_cvar_num("kgb_cw_hltv_auto_record") : 0
+    new oldLegacyClientDemos = g_LegacyOldClientDemos
+    new oldLegacyHltvEnabled = g_LegacyOldHltvEnabled, oldLegacyHltvAuto = g_LegacyOldHltvAuto
+    restore_legacy_record_mode()
+    if (!start_warmup(true))
+    {
+        restore_managed_config_snapshot()
+        restore_legacy_snapshot(oldLegacyOverride, oldCurrentClientDemos,
+            oldHasHltvEnabled, oldCurrentHltvEnabled, oldHasHltvAuto, oldCurrentHltvAuto,
+            oldLegacyClientDemos, oldLegacyHltvEnabled, oldLegacyHltvAuto)
+        cw_console_ml(id, "CW_ERR_LEGACY_START")
+        return PLUGIN_HANDLED
+    }
+    if (preset[0])
+    {
+        cw_console_ml(id, "CW_PRESET_APPLIED", preset)
+        audit_event("preset_applied")
     }
     announce_ml("CW_LEGACY_STARTED", teamA, teamB)
     return PLUGIN_HANDLED
@@ -801,53 +840,56 @@ stock bool:configure_legacy_match(id, const teamAInput[], const teamBInput[], co
         return false
     }
 
-    /* All replacement arguments and dependencies are valid before the old
-     * legacy recording policy is unwound. */
-    restore_legacy_record_mode()
-
-    new oldFormat[4], oldTeamA[MAX_TEAM_NAME + 1], oldTeamB[MAX_TEAM_NAME + 1]
-    new oldTagA[MAX_TEAM_TAG + 1], oldTagB[MAX_TEAM_TAG + 1], oldConfig[MAX_CONFIG_TOKEN + 1]
-    new oldMap1[MAX_MAP_TOKEN + 1], oldMap2[MAX_MAP_TOKEN + 1]
-    get_pcvar_string(g_CvarFormat, oldFormat, charsmax(oldFormat))
-    get_pcvar_string(g_CvarTeamAName, oldTeamA, charsmax(oldTeamA)); get_pcvar_string(g_CvarTeamBName, oldTeamB, charsmax(oldTeamB))
-    get_pcvar_string(g_CvarTeamATag, oldTagA, charsmax(oldTagA)); get_pcvar_string(g_CvarTeamBTag, oldTagB, charsmax(oldTagB))
+    /* Validate the full staged replacement before unwinding the active
+     * override. This includes ready/swap policy, map relationships, and all
+     * phase files, not just the command's direct arguments. */
+    snapshot_managed_config()
+    new oldConfig[MAX_CONFIG_TOKEN + 1]
     get_pcvar_string(g_CvarMatchConfig, oldConfig, charsmax(oldConfig))
-    get_pcvar_string(g_CvarMap1, oldMap1, charsmax(oldMap1)); get_pcvar_string(g_CvarMap2, oldMap2, charsmax(oldMap2))
-    new oldHalfRounds = get_pcvar_num(g_CvarHalfRounds), oldWinRounds = get_pcvar_num(g_CvarWinRounds)
-    new oldTimeLimit = get_pcvar_num(g_CvarTimeLimitMinutes), oldMapCount = get_pcvar_num(g_CvarMapCount)
-    new oldClientDemos = get_pcvar_num(g_CvarClientDemos)
-    new bool:hasHltvEnabled = bool:cvar_exists("kgb_cw_hltv_enabled")
-    new bool:hasHltvAuto = bool:cvar_exists("kgb_cw_hltv_auto_record")
-    new oldHltvEnabled = hasHltvEnabled ? get_cvar_num("kgb_cw_hltv_enabled") : 0
-    new oldHltvAuto = hasHltvAuto ? get_cvar_num("kgb_cw_hltv_auto_record") : 0
-
-    apply_legacy_rule(rule, true); apply_legacy_record_mode(recordMode, true)
+    apply_legacy_rule(rule, true)
     set_pcvar_string(g_CvarTeamAName, teamA); set_pcvar_string(g_CvarTeamBName, teamB)
     set_pcvar_string(g_CvarTeamATag, ""); set_pcvar_string(g_CvarTeamBTag, "")
     set_pcvar_string(g_CvarMatchConfig, config)
     set_pcvar_string(g_CvarMap1, currentMap); set_pcvar_string(g_CvarMap2, secondMap)
     set_pcvar_num(g_CvarMapCount, secondMap[0] ? 2 : 1)
-    if (!runtime_config_valid(false) || !start_warmup(true))
+    if (!runtime_config_valid(false))
     {
-        set_pcvar_string(g_CvarFormat, oldFormat)
-        set_pcvar_num(g_CvarHalfRounds, oldHalfRounds); set_pcvar_num(g_CvarWinRounds, oldWinRounds); set_pcvar_num(g_CvarTimeLimitMinutes, oldTimeLimit)
-        set_pcvar_string(g_CvarTeamAName, oldTeamA); set_pcvar_string(g_CvarTeamBName, oldTeamB)
-        set_pcvar_string(g_CvarTeamATag, oldTagA); set_pcvar_string(g_CvarTeamBTag, oldTagB)
+        restore_managed_config_snapshot()
         set_pcvar_string(g_CvarMatchConfig, oldConfig)
-        set_pcvar_string(g_CvarMap1, oldMap1); set_pcvar_string(g_CvarMap2, oldMap2); set_pcvar_num(g_CvarMapCount, oldMapCount)
-        set_pcvar_num(g_CvarClientDemos, oldClientDemos)
-        if (hasHltvEnabled) set_cvar_num("kgb_cw_hltv_enabled", oldHltvEnabled)
-        if (hasHltvAuto) set_cvar_num("kgb_cw_hltv_auto_record", oldHltvAuto)
-        load_runtime_settings(false)
+        cw_console_ml(id, "CW_ERR_LEGACY_START")
+        return false
+    }
+
+    new bool:oldLegacyOverride = g_LegacyRecordOverride
+    new oldCurrentClientDemos = get_pcvar_num(g_CvarClientDemos)
+    new bool:oldHasHltvEnabled = bool:cvar_exists("kgb_cw_hltv_enabled")
+    new bool:oldHasHltvAuto = bool:cvar_exists("kgb_cw_hltv_auto_record")
+    new oldCurrentHltvEnabled = oldHasHltvEnabled ? get_cvar_num("kgb_cw_hltv_enabled") : 0
+    new oldCurrentHltvAuto = oldHasHltvAuto ? get_cvar_num("kgb_cw_hltv_auto_record") : 0
+    new oldLegacyClientDemos = g_LegacyOldClientDemos
+    new oldLegacyHltvEnabled = g_LegacyOldHltvEnabled, oldLegacyHltvAuto = g_LegacyOldHltvAuto
+
+    restore_legacy_record_mode()
+    new replacementOldClientDemos = get_pcvar_num(g_CvarClientDemos)
+    new replacementOldHltvEnabled = oldHasHltvEnabled ? get_cvar_num("kgb_cw_hltv_enabled") : -1
+    new replacementOldHltvAuto = oldHasHltvAuto ? get_cvar_num("kgb_cw_hltv_auto_record") : -1
+    apply_legacy_record_mode(recordMode, true)
+    if (!start_warmup(true))
+    {
+        restore_managed_config_snapshot()
+        set_pcvar_string(g_CvarMatchConfig, oldConfig)
+        restore_legacy_snapshot(oldLegacyOverride, oldCurrentClientDemos,
+            oldHasHltvEnabled, oldCurrentHltvEnabled, oldHasHltvAuto, oldCurrentHltvAuto,
+            oldLegacyClientDemos, oldLegacyHltvEnabled, oldLegacyHltvAuto)
         cw_console_ml(id, "CW_ERR_LEGACY_START")
         return false
     }
     if (recordMode[0])
     {
         g_LegacyRecordOverride = true
-        g_LegacyOldClientDemos = oldClientDemos
-        g_LegacyOldHltvEnabled = hasHltvEnabled ? oldHltvEnabled : -1
-        g_LegacyOldHltvAuto = hasHltvAuto ? oldHltvAuto : -1
+        g_LegacyOldClientDemos = replacementOldClientDemos
+        g_LegacyOldHltvEnabled = replacementOldHltvEnabled
+        g_LegacyOldHltvAuto = replacementOldHltvAuto
     }
     announce_ml("CW_LEGACY_STARTED", teamA, teamB)
     return true
@@ -907,6 +949,19 @@ stock restore_legacy_record_mode()
     g_LegacyRecordOverride = false
     g_LegacyOldClientDemos = 0; g_LegacyOldHltvEnabled = -1; g_LegacyOldHltvAuto = -1
     audit_event("legacy_record_mode_restored")
+}
+
+stock restore_legacy_snapshot(bool:wasActive, clientDemos,
+    bool:hadHltvEnabled, hltvEnabled, bool:hadHltvAuto, hltvAuto,
+    oldClientDemos, oldHltvEnabled, oldHltvAuto)
+{
+    set_pcvar_num(g_CvarClientDemos, clientDemos)
+    if (hadHltvEnabled && cvar_exists("kgb_cw_hltv_enabled")) set_cvar_num("kgb_cw_hltv_enabled", hltvEnabled)
+    if (hadHltvAuto && cvar_exists("kgb_cw_hltv_auto_record")) set_cvar_num("kgb_cw_hltv_auto_record", hltvAuto)
+    g_LegacyRecordOverride = wasActive
+    g_LegacyOldClientDemos = oldClientDemos
+    g_LegacyOldHltvEnabled = oldHltvEnabled
+    g_LegacyOldHltvAuto = oldHltvAuto
 }
 
 stock show_identity_motd(id)
@@ -1395,6 +1450,8 @@ public task_resume_crossmap()
     if (!parse_crossmap_envelope())
     {
         log_amx("Rejected stale or invalid cross-map match state")
+        if (!restore_rejected_crossmap_state())
+            log_amx("Rejected cross-map state did not contain a complete valid environment/recording baseline")
         clear_crossmap_state()
         return
     }
@@ -1978,7 +2035,7 @@ stock bool:managed_config_file_valid(const path[], bool:preset)
 stock bool:apply_managed_config_file(const path[], bool:preset)
 {
     if (!managed_config_file_valid(path, preset)) return false
-    for (new i = 0; i < sizeof g_ManagedConfigNames; i++) get_cvar_string(g_ManagedConfigNames[i], g_ConfigRollbackValues[i], charsmax(g_ConfigRollbackValues[]))
+    snapshot_managed_config()
     new line[256], length, name[64], value[128]
     for (new lineNumber = 0; read_file(path, lineNumber, line, charsmax(line), length); lineNumber++)
     {
@@ -1994,9 +2051,21 @@ stock bool:apply_managed_config_file(const path[], bool:preset)
         schedule_status_hud()
         return true
     }
-    for (new i = 0; i < sizeof g_ManagedConfigNames; i++) set_cvar_string(g_ManagedConfigNames[i], g_ConfigRollbackValues[i])
-    refresh_branding(false); load_runtime_settings(false); schedule_status_hud()
+    restore_managed_config_snapshot()
     return false
+}
+
+stock snapshot_managed_config()
+{
+    for (new index = 0; index < sizeof g_ManagedConfigNames; index++)
+        get_cvar_string(g_ManagedConfigNames[index], g_ConfigRollbackValues[index], charsmax(g_ConfigRollbackValues[]))
+}
+
+stock restore_managed_config_snapshot()
+{
+    for (new index = 0; index < sizeof g_ManagedConfigNames; index++)
+        set_cvar_string(g_ManagedConfigNames[index], g_ConfigRollbackValues[index])
+    refresh_branding(false); load_runtime_settings(false); schedule_status_hud()
 }
 
 stock save_menu_config(id)
@@ -3204,6 +3273,51 @@ stock commit_crossmap_envelope()
     g_LegacyOldClientDemos = g_RestoreLegacyClient
     g_LegacyOldHltvEnabled = g_RestoreLegacyHltvEnabled
     g_LegacyOldHltvAuto = g_RestoreLegacyHltvAuto
+}
+
+/* A full map-two envelope may be rejected because its topology, manifest, or
+ * scores are stale without making its separately validated pre-match baseline
+ * unsafe. Restore that baseline before invalidating the persisted envelope so
+ * a failed resume cannot strand temporary credentials or recording policy. */
+stock bool:restore_rejected_crossmap_state()
+{
+    new envSaved[4], oldHostname[128], oldPassword[64], oldShield[8], shield
+    new legacyValue[4], legacyClientValue[8], legacyHltvEnabledValue[8], legacyHltvAutoValue[8]
+    new legacyActive, legacyClient, legacyHltvEnabled, legacyHltvAuto
+    get_localinfo(LI_ENV_SAVED, envSaved, charsmax(envSaved))
+    get_localinfo(LI_OLD_HOST, oldHostname, charsmax(oldHostname)); get_localinfo(LI_OLD_PASS, oldPassword, charsmax(oldPassword))
+    get_localinfo(LI_OLD_SHIELD, oldShield, charsmax(oldShield))
+    get_localinfo(LI_LEGACY_RECORD, legacyValue, charsmax(legacyValue))
+    get_localinfo(LI_LEGACY_CLIENT, legacyClientValue, charsmax(legacyClientValue))
+    get_localinfo(LI_LEGACY_HLTV_ENABLED, legacyHltvEnabledValue, charsmax(legacyHltvEnabledValue))
+    get_localinfo(LI_LEGACY_HLTV_AUTO, legacyHltvAutoValue, charsmax(legacyHltvAutoValue))
+
+    if (!equal(envSaved, "1") || !valid_snapshot_value(oldHostname, 127) || !valid_snapshot_value(oldPassword, 63) ||
+        (oldShield[0] && !parse_bool_exact(oldShield, shield)) ||
+        !parse_bool_exact(legacyValue, legacyActive) || !parse_bool_exact(legacyClientValue, legacyClient) ||
+        !parse_legacy_tristate(legacyHltvEnabledValue, legacyHltvEnabled) ||
+        !parse_legacy_tristate(legacyHltvAutoValue, legacyHltvAuto)) return false
+    if (legacyActive)
+    {
+        if ((legacyHltvEnabled >= 0 && !cvar_exists("kgb_cw_hltv_enabled")) ||
+            (legacyHltvAuto >= 0 && !cvar_exists("kgb_cw_hltv_auto_record"))) return false
+    }
+    else if (legacyClient != 0 || legacyHltvEnabled != -1 || legacyHltvAuto != -1) return false
+
+    copy(g_OldHostname, charsmax(g_OldHostname), oldHostname)
+    copy(g_OldPassword, charsmax(g_OldPassword), oldPassword)
+    copy(g_OldShield, charsmax(g_OldShield), oldShield)
+    g_EnvironmentSaved = true
+    restore_environment()
+    if (legacyActive)
+    {
+        g_LegacyRecordOverride = true
+        g_LegacyOldClientDemos = legacyClient
+        g_LegacyOldHltvEnabled = legacyHltvEnabled
+        g_LegacyOldHltvAuto = legacyHltvAuto
+        restore_legacy_record_mode()
+    }
+    return true
 }
 
 stock clear_crossmap_state()

@@ -74,7 +74,7 @@ jobs:
           case "$GITHUB_REF" in
             refs/tags/v*) package_version="$GITHUB_REF_NAME" ;;
           esac
-          ./scripts/package.sh "$package_version"
+          ./scripts/test-package-reproducibility.sh "$package_version"
           mkdir -p release-assets
           cp compiled/kgb_clan_war.amxx compiled/kgb_clan_war.amxx.sha256 release-assets/
           cp compiled/kgb_clan_war_hltv.amxx compiled/kgb_clan_war_hltv.amxx.sha256 release-assets/

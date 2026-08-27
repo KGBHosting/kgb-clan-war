@@ -18,6 +18,22 @@ command -v zip >/dev/null 2>&1 || {
 	exit 1
 }
 
+# ZIP stores local DOS timestamps and Unix mode bits. Fix both, strip optional
+# metadata, and feed entries in byte-sorted order so identical inputs produce
+# the same release bytes on every build host.
+export TZ=UTC
+PACKAGE_TIMESTAMP="${SOURCE_DATE_EPOCH:-315532800}"
+case "$PACKAGE_TIMESTAMP" in
+	'' | *[!0-9]*)
+		printf 'SOURCE_DATE_EPOCH must be a non-negative integer: %s\n' "$PACKAGE_TIMESTAMP" >&2
+		exit 2
+		;;
+esac
+# ZIP cannot represent dates before 1980-01-01.
+if test "$PACKAGE_TIMESTAMP" -lt 315532800; then
+	PACKAGE_TIMESTAMP=315532800
+fi
+
 verify_amxx_magic() {
 	local artifact="$1"
 	local magic
@@ -95,9 +111,22 @@ cp "$ROOT_DIR/tests/sql"/*.sql "$STAGE_DIR/tests/sql/"
 cp "$ROOT_DIR"/docs/*.md "$STAGE_DIR/docs/"
 cp "$ROOT_DIR/README.md" "$ROOT_DIR/LICENSE" "$ROOT_DIR/SECURITY.md" "$STAGE_DIR/"
 
+find "$STAGE_DIR" -type d -exec chmod 0755 {} +
+find "$STAGE_DIR" -type f -exec chmod 0644 {} +
+find "$STAGE_DIR/scripts" -type f -name '*.sh' -exec chmod 0755 {} +
+find "$STAGE_DIR" -exec touch -h -d "@$PACKAGE_TIMESTAMP" {} + 2>/dev/null || {
+	# BSD touch (macOS) has no -d. SOURCE_DATE_EPOCH's override is supported by
+	# the release Linux runner; local macOS reproducibility uses the ZIP epoch.
+	if test "$PACKAGE_TIMESTAMP" -ne 315532800; then
+		printf 'This touch implementation cannot apply SOURCE_DATE_EPOCH=%s.\n' "$PACKAGE_TIMESTAMP" >&2
+		exit 1
+	fi
+	find "$STAGE_DIR" -exec touch -h -t 198001010000.00 {} +
+}
+
 (
 	cd "$ROOT_DIR/dist"
-	zip -q -r "$PACKAGE_NAME.zip" "$PACKAGE_NAME"
+	find "$PACKAGE_NAME" -print | LC_ALL=C sort | zip -q -X "$PACKAGE_NAME.zip" -@
 )
 
 if command -v sha256sum >/dev/null 2>&1; then

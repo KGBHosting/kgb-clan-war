@@ -62,6 +62,42 @@ valid_envelope=0
 if test "$valid_envelope" -eq 1; then live_format="$staged_format"; fi
 test "$live_format" = mr
 
+# A rejected full map-two envelope still owns separately validated pre-match
+# environment and recording baselines. They must be restored before storage is
+# cleared, without committing any match/score/topology field.
+require_string "$CORE" 'stock bool:restore_rejected_crossmap_state()'
+require_string "$CORE" 'g_EnvironmentSaved = true'
+require_string "$CORE" 'restore_environment()'
+require_string "$CORE" 'g_LegacyOldClientDemos = legacyClient'
+resume_restore_line="$(awk '/public task_resume_crossmap\(\)/,/stock bool:mode_enabled\(id\)/ { if (index($0, "restore_rejected_crossmap_state()")) { print NR; exit } }' "$CORE")"
+resume_clear_line="$(awk '/public task_resume_crossmap\(\)/,/stock bool:mode_enabled\(id\)/ { if (index($0, "clear_crossmap_state()")) { print NR; exit } }' "$CORE")"
+test -n "$resume_restore_line" && test -n "$resume_clear_line" && test "$resume_restore_line" -lt "$resume_clear_line"
+
+runtime_hostname='Temporary Match'
+runtime_password='temporary-secret'
+runtime_shield=0
+runtime_client_demos=1
+runtime_hltv_enabled=1
+runtime_hltv_auto=1
+baseline_hostname='Customer Server'
+baseline_password='customer-secret'
+baseline_shield=1
+baseline_client_demos=0
+baseline_hltv_enabled=1
+baseline_hltv_auto=0
+valid_full_envelope=0
+valid_recovery_baseline=1
+if test "$valid_full_envelope" -ne 1 && test "$valid_recovery_baseline" -eq 1; then
+	runtime_hostname="$baseline_hostname"
+	runtime_password="$baseline_password"
+	runtime_shield="$baseline_shield"
+	runtime_client_demos="$baseline_client_demos"
+	runtime_hltv_enabled="$baseline_hltv_enabled"
+	runtime_hltv_auto="$baseline_hltv_auto"
+fi
+test "$runtime_hostname|$runtime_password|$runtime_shield" = 'Customer Server|customer-secret|1'
+test "$runtime_client_demos|$runtime_hltv_enabled|$runtime_hltv_auto" = '0|1|0'
+
 # TL expiry has an explicit no-winner Round_End path, and all terminal half
 # paths capture before the regulation/OT transition.
 require_string "$CORE" 'register_logevent("event_round_end", 2, "1=Round_End")'
@@ -217,6 +253,49 @@ require_string "$CORE" 'restore_legacy_record_mode(); clear_crossmap_state(); di
 legacy_validate_line="$(grep -n 'apply_legacy_record_mode(recordMode, false)' "$CORE" | cut -d: -f1 | head -1)"
 legacy_restore_line="$(grep -n 'restore_legacy_record_mode()' "$CORE" | awk -F: -v minimum="$legacy_validate_line" '$1 > minimum {print $1; exit}')"
 test "$legacy_restore_line" -gt "$legacy_validate_line"
+
+# Full and compact legacy launchers validate the complete staged runtime before
+# unwinding the currently active recording override. Invalid ready mode, swap
+# policy, map topology, or phase config must preserve the whole prior tuple.
+short_runtime_line="$(awk '/public command_legacy_match\(id, level, cid\)/,/public command_legacy_match2\(id, level, cid\)/ { if (index($0, "runtime_config_valid(false)")) { print NR; exit } }' "$CORE")"
+short_restore_line="$(awk '/public command_legacy_match\(id, level, cid\)/,/public command_legacy_match2\(id, level, cid\)/ { if (index($0, "restore_legacy_record_mode()")) { print NR; exit } }' "$CORE")"
+full_runtime_line="$(awk '/stock bool:configure_legacy_match\(/,/stock bool:apply_legacy_rule\(/ { if (index($0, "runtime_config_valid(false)")) { print NR; exit } }' "$CORE")"
+full_restore_line="$(awk '/stock bool:configure_legacy_match\(/,/stock bool:apply_legacy_rule\(/ { if (index($0, "restore_legacy_record_mode()")) { print NR; exit } }' "$CORE")"
+test -n "$short_runtime_line" && test -n "$short_restore_line" && test "$short_runtime_line" -lt "$short_restore_line"
+test -n "$full_runtime_line" && test -n "$full_restore_line" && test "$full_runtime_line" -lt "$full_restore_line"
+require_string "$CORE" 'restore_legacy_snapshot(oldLegacyOverride, oldCurrentClientDemos,'
+require_string "$CORE" 'restore_managed_config_snapshot()'
+require_string "$CORE" 'Invalid kgb_cw_ready_mode; expected player, team or admin'
+require_string "$CORE" 'Invalid kgb_cw_swap_policy; expected halves or off'
+require_string "$CORE" 'Invalid kgb_cw_map2 for two-map match'
+require_string "$CORE" '!validate_phase_config(g_CvarWarmupConfig, "warmup")'
+require_string "$CORE" '!validate_phase_config(g_CvarMatchConfig, "match")'
+require_string "$CORE" '!validate_phase_config(g_CvarOvertimeConfig, "overtime")'
+require_string "$CORE" '!validate_phase_config(g_CvarDefaultConfig, "default")'
+
+legacy_override='1|1|1|1|0|1|0'
+replacement_valid() {
+	case "$1" in player | team | admin) ;; *) return 1 ;; esac
+	case "$2" in halves | off) ;; *) return 1 ;; esac
+	if test "$3" -eq 2 && { test -z "$4" || test "$4" = "$5"; }; then return 1; fi
+	test "$6" -eq 1
+}
+attempt_invalid_replacement() {
+	local label="$1" ready="$2" swap="$3" map_count="$4" map1="$5" map2="$6" phase_exists="$7"
+	local before="$legacy_override"
+	if replacement_valid "$ready" "$swap" "$map_count" "$map1" "$map2" "$phase_exists"; then
+		printf 'The %s regression fixture unexpectedly validated.\n' "$label" >&2
+		exit 1
+	fi
+	test "$legacy_override" = "$before" || {
+		printf 'Invalid %s replacement changed the active legacy override.\n' "$label" >&2
+		exit 1
+	}
+}
+attempt_invalid_replacement ready broken halves 1 de_dust2 '' 1
+attempt_invalid_replacement swap player broken 1 de_dust2 '' 1
+attempt_invalid_replacement topology player halves 2 de_dust2 de_dust2 1
+attempt_invalid_replacement phase player halves 1 de_dust2 '' 0
 
 require_string "$CORE" 'g_CvarFileStats = register_cvar("kgb_cw_file_stats", "0")'
 
