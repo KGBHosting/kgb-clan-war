@@ -27,7 +27,7 @@ for source in "$CORE" "$HLTV" "$SQL"; do
 		printf 'Missing required source: %s\n' "${source#"$ROOT_DIR/"}" >&2
 		exit 1
 	}
-	require_string "$source" '#define PLUGIN_VERSION "0.3.0"'
+	require_string "$source" '#define PLUGIN_VERSION "0.4.0"'
 	require_string "$source" 'SPDX-License-Identifier: GPL-3.0-or-later'
 	if awk 'length($0) > 511 { found=1 } END { exit found ? 0 : 1 }' "$source"; then
 		printf 'A source line exceeds the AMX Mod X 1.8.2 compiler limit: %s\n' "${source#"$ROOT_DIR/"}" >&2
@@ -147,7 +147,7 @@ require_string "$CORE_CONFIG" 'kgb_cw_playout_vote_default 1'
 require_string "$CORE_CONFIG" 'kgb_cw_time_limit_finish_round 1'
 require_string "$CORE_CONFIG" 'kgb_cw_screenshot_on_stop 0'
 require_string "$CORE_CONFIG" 'kgb_cw_file_stats 0'
-require_string "$README" '`v0.3.0` is the next qualification candidate.'
+require_string "$README" '`v0.4.0` is the next qualification candidate.'
 require_string "$README" 'KGB Hosting may install, run, modify, and redistribute it'
 require_string "$README" 'does not grant trademark rights'
 

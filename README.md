@@ -10,11 +10,11 @@ credentials nor a database.
 
 ## Release policy
 
-`v0.3.0` is the next qualification candidate. It is not a release until the
-tagged release workflow completes. The earlier stable-version candidate was
-withdrawn when configurable operator branding was added; do not deploy that
-candidate. Promote `v0.3.0` only after its CI and development-server
-qualification evidence is complete.
+`v0.4.0` is the next qualification candidate. It is not a release until the
+tagged release workflow completes. The published `v0.3.0` prerelease remains
+an immutable earlier candidate and must not be moved or reused. Promote
+`v0.4.0` only after its CI and development-server qualification evidence is
+complete.
 
 The qualification line includes the practical AMX Match Deluxe feature
 set: player/team/admin ready modes; max-round, win-limit, and time-limit
@@ -310,8 +310,8 @@ fallback and accepts only a numeric IPv4 destination. Leave
 and the network path is restricted to that proxy.
 
 SQL persistence uses threaded SQLX queries so match writes do not block the
-game loop. v0.3.0 supports the AMX Mod X MySQL/MariaDB SQLX driver and creates
-the fixed `kgb_cw_*` tables listed in
+game loop. v0.4.0 keeps the v0.3 schema and supports the AMX Mod X
+MySQL/MariaDB SQLX driver, creating the fixed `kgb_cw_*` tables listed in
 [`sql/schema.sql`](sql/schema.sql). Configure a least-privilege database account
 in AMX Mod X `sql.cfg`, then set `kgb_cw_sql_enabled 1`. Player rows include
 Steam authentication IDs, map number, current names, team, kills, deaths, and
@@ -333,11 +333,10 @@ The SQL account needs the table create/alter and normal read/write privileges
 used by the plugin. Operators who require a reviewed maintenance-window change
 can instead stop the server and run
 [`sql/migrate-v0.2.0-to-v0.3.0.sql`](sql/migrate-v0.2.0-to-v0.3.0.sql)
-before starting v0.3.0. The script is idempotent and refuses unknown table
-shapes; run it with a maintenance account allowed to create, execute, and drop
+before starting v0.3.0 or later. The script is idempotent and refuses unknown
+table shapes; run it with a maintenance account allowed to create, execute, and drop
 a temporary stored procedure as well as alter the player table. Other SQLX
-drivers are not a supported v0.3.0
-configuration.
+drivers are not supported by the v0.3 schema line.
 
 The optional browser in [`web/`](web/) reads the v0.3 tables without modifying
 them. It uses native PDO prepared statements, escaped output, bounded
@@ -408,7 +407,7 @@ first four bytes are not the AMXX `XXMA` magic used by the Panel artifact gate.
 ./scripts/test-web-stats.sh
 ./scripts/test-web-stats-mariadb.sh
 ./scripts/test-install.sh
-./scripts/test-build-reproducibility.sh v0.3.0
+./scripts/test-build-reproducibility.sh v0.4.0
 ```
 
 Compatibility checks compile all three plugins against AMX Mod X `1.8.2`,
@@ -427,7 +426,7 @@ creating a release.
 - `kgb_clan_war.amxx` and `kgb_clan_war.amxx.sha256`
 - `kgb_clan_war_hltv.amxx` and `kgb_clan_war_hltv.amxx.sha256`
 - `kgb_clan_war_sql.amxx` and `kgb_clan_war_sql.amxx.sha256`
-- `kgb-clan-war-v0.3.0.zip` and `kgb-clan-war-v0.3.0.zip.sha256`
+- `kgb-clan-war-v0.4.0.zip` and `kgb-clan-war-v0.4.0.zip.sha256`
 
 The convenience ZIP also contains the optional web statistics source and its
 example configuration. It never contains a live database or access credential.

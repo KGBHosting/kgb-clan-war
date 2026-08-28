@@ -7,7 +7,7 @@ not decompiled, linked, copied, or redistributed. Its language and league files
 were not copied. The public behavior reference is the
 [AMX Match Deluxe thread](https://forums.alliedmods.net/showthread.php?t=5231).
 
-## v0.3.0 clean-room coverage
+## v0.4.0 clean-room coverage
 
 | Observed workflow | KGB Clan War implementation |
 | --- | --- |
@@ -37,7 +37,7 @@ were not copied. The public behavior reference is the
 - Named CAL/ESL/EuroCup/JUL rulesets are not shipped. League rules change and
   their historical files have unclear provenance. Operators can add reviewed,
   current presets without recompiling the plugin.
-- The legacy message file is not reused. v0.3.0 supplies independently written
+- The legacy message file is not reused. v0.4.0 supplies independently written
   English and German customer-visible text. Technical server audit/error logs
   remain English so operators have one searchable diagnostic vocabulary.
 - HLTV passwords cannot be entered or displayed through an in-game menu/CVAR.
