@@ -24,6 +24,12 @@ if rg -n -i '\b(?:SHA2|CONCAT)\b' "$ROOT_DIR/web/src/StatsRepository.php"; then
 	printf 'Player links must not require a computed full-table database lookup.\n' >&2
 	exit 1
 fi
+for required_index_guard in 'SUB_PART IS NULL' "INDEX_TYPE IN ('BTREE','HASH')" IS_VISIBLE IGNORED; do
+	if ! rg -Fq "$required_index_guard" "$ROOT_DIR/web/src/StatsRepository.php"; then
+		printf 'StatsRepository is missing player-index guard: %s\n' "$required_index_guard" >&2
+		exit 1
+	fi
+done
 if rg -n -i '\b(?:INSERT|UPDATE|DELETE|REPLACE|ALTER|DROP|CREATE|TRUNCATE|GRANT|REVOKE)\b' \
 	"$ROOT_DIR/web/src/StatsRepository.php"; then
 	printf 'StatsRepository contains a write-capable SQL verb.\n' >&2

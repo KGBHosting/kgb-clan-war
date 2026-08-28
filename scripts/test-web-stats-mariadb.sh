@@ -50,21 +50,64 @@ mysql_exec() {
 mysql_exec < "$ROOT_DIR/sql/schema.sql"
 mysql_exec <<'SQL'
 ALTER TABLE kgb_cw_players DROP INDEX kgb_cw_players_auth_id;
+CREATE INDEX kgb_cw_players_auth_prefix ON kgb_cw_players (auth_id(1));
+CREATE USER 'web_reader'@'%' IDENTIFIED BY 'kgb-cw-web-reader-test-only';
+GRANT SELECT ON kgb_cw.* TO 'web_reader'@'%';
+FLUSH PRIVILEGES;
 SQL
+
+PORT_BINDING="$(docker port "$CONTAINER_NAME" 3306/tcp | head -1)"
+HOST_PORT="${PORT_BINDING##*:}"
+case "$HOST_PORT" in
+	'' | *[!0-9]*) printf 'Could not resolve the test MariaDB host port.\n' >&2; exit 1 ;;
+esac
+
+KGB_CW_TEST_DSN="mysql:host=127.0.0.1;port=$HOST_PORT;dbname=kgb_cw;charset=utf8mb4" \
+KGB_CW_TEST_USERNAME=web_reader \
+KGB_CW_TEST_PASSWORD="$READER_PASSWORD" \
+KGB_CW_EXPECT_INDEX_REJECTION=prefix-only \
+	php "$ROOT_DIR/tests/web/mariadb.php"
+
 mysql_exec < "$ROOT_DIR/sql/migrate-v0.3.0-web-player-index.sql"
 mysql_exec < "$ROOT_DIR/sql/migrate-v0.3.0-web-player-index.sql"
 
 INDEX_SIGNATURE="$(mysql_exec <<'SQL'
-SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',')
+SELECT CONCAT(COLUMN_NAME,':',COALESCE(SUB_PART,'FULL'),':',INDEX_TYPE)
 FROM INFORMATION_SCHEMA.STATISTICS
 WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='kgb_cw_players'
-  AND INDEX_NAME='kgb_cw_players_auth_id';
+  AND INDEX_NAME='kgb_cw_players_auth_id' AND SEQ_IN_INDEX=1;
 SQL
 )"
-if test "$INDEX_SIGNATURE" != 'auth_id'; then
+if test "$INDEX_SIGNATURE" != 'auth_id:FULL:BTREE'; then
 	printf 'The web player-index migration did not produce the expected index.\n' >&2
 	exit 1
 fi
+
+mysql_exec <<'SQL'
+ALTER TABLE kgb_cw_players ALTER INDEX kgb_cw_players_auth_id IGNORED;
+SQL
+KGB_CW_TEST_DSN="mysql:host=127.0.0.1;port=$HOST_PORT;dbname=kgb_cw;charset=utf8mb4" \
+KGB_CW_TEST_USERNAME=web_reader \
+KGB_CW_TEST_PASSWORD="$READER_PASSWORD" \
+KGB_CW_EXPECT_INDEX_REJECTION=ignored \
+	php "$ROOT_DIR/tests/web/mariadb.php"
+
+mysql_exec < "$ROOT_DIR/sql/migrate-v0.3.0-web-player-index.sql"
+mysql_exec < "$ROOT_DIR/sql/migrate-v0.3.0-web-player-index.sql"
+FALLBACK_SIGNATURE="$(mysql_exec <<'SQL'
+SELECT CONCAT(COLUMN_NAME,':',COALESCE(SUB_PART,'FULL'),':',INDEX_TYPE,':',IGNORED)
+FROM INFORMATION_SCHEMA.STATISTICS
+WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='kgb_cw_players'
+  AND INDEX_NAME='kgb_cw_players_auth_id_full' AND SEQ_IN_INDEX=1;
+SQL
+)"
+if test "$FALLBACK_SIGNATURE" != 'auth_id:FULL:BTREE:NO'; then
+	printf 'The web player-index migration did not replace an ignored-only contract with a usable index.\n' >&2
+	exit 1
+fi
+mysql_exec <<'SQL'
+ALTER TABLE kgb_cw_players ALTER INDEX kgb_cw_players_auth_id NOT IGNORED;
+SQL
 
 mysql_exec <<'SQL'
 INSERT INTO kgb_cw_matches
@@ -79,16 +122,7 @@ VALUES ('mariadb-match',1,2,'half_end',16,12,'2026-08-01 11:00:00');
 INSERT INTO kgb_cw_players
     (match_uid,map_number,auth_id,player_name,last_team,kills,deaths,headshots,updated_at)
 VALUES ('mariadb-match',1,'STEAM_0:1:999','MariaDB Player','CT',9,4,3,'2026-08-01 11:00:00');
-CREATE USER 'web_reader'@'%' IDENTIFIED BY 'kgb-cw-web-reader-test-only';
-GRANT SELECT ON kgb_cw.* TO 'web_reader'@'%';
-FLUSH PRIVILEGES;
 SQL
-
-PORT_BINDING="$(docker port "$CONTAINER_NAME" 3306/tcp | head -1)"
-HOST_PORT="${PORT_BINDING##*:}"
-case "$HOST_PORT" in
-	'' | *[!0-9]*) printf 'Could not resolve the test MariaDB host port.\n' >&2; exit 1 ;;
-esac
 
 KGB_CW_TEST_DSN="mysql:host=127.0.0.1;port=$HOST_PORT;dbname=kgb_cw;charset=utf8mb4" \
 KGB_CW_TEST_USERNAME=web_reader \

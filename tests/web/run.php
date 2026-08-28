@@ -40,7 +40,7 @@ $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
 $schema = (string) file_get_contents(dirname(__DIR__, 2) . '/sql/schema.sql');
 $schema = str_replace(",\n    INDEX kgb_cw_players_auth_id (auth_id)", '', $schema);
 $pdo->exec($schema);
-$pdo->exec('CREATE INDEX kgb_cw_players_auth_id ON kgb_cw_players (auth_id)');
+$pdo->exec('CREATE INDEX kgb_cw_players_auth_prefix ON kgb_cw_players (substr(auth_id, 1, 1))');
 
 insertRow($pdo, 'kgb_cw_matches', [
     'match_uid' => 'match-1', 'team_a_name' => 'Alpha', 'team_b_name' => '<script>Beta</script>',
@@ -83,6 +83,11 @@ foreach ([
         'last_team' => $team, 'kills' => $kills, 'deaths' => $deaths, 'headshots' => $headshots, 'updated_at' => $updated,
     ]);
 }
+
+$prefixPlan = $pdo->prepare('EXPLAIN QUERY PLAN SELECT auth_id FROM kgb_cw_players WHERE auth_id=:auth_id');
+$prefixPlan->execute(['auth_id' => 'STEAM_0:1:111']);
+check(!str_contains(implode(' ', array_column($prefixPlan->fetchAll(), 'detail')), 'kgb_cw_players_auth_prefix'), 'A prefix-only player index incorrectly satisfied exact lookup.');
+$pdo->exec('CREATE INDEX kgb_cw_players_auth_id ON kgb_cw_players (auth_id)');
 
 $secret = 'test-only-player-link-secret-32-bytes-minimum';
 $repository = new StatsRepository($pdo);

@@ -14,6 +14,20 @@ $password = (string) getenv('KGB_CW_TEST_PASSWORD');
 $pdo = Database::connect(['dsn' => $dsn, 'username' => $username, 'password' => $password]);
 $repository = new StatsRepository($pdo);
 $playerLink = new PlayerLink('mariadb-test-player-link-secret-32-bytes');
+$expectIndexRejection = (string) getenv('KGB_CW_EXPECT_INDEX_REJECTION');
+if ($expectIndexRejection !== '') {
+    try {
+        $repository->assertCompatibleSchema();
+    } catch (RuntimeException $exception) {
+        if (str_contains($exception->getMessage(), 'full usable auth_id')) {
+            printf("MariaDB %s auth_id index was rejected.\n", $expectIndexRejection);
+            exit(0);
+        }
+        throw $exception;
+    }
+
+    throw new RuntimeException("MariaDB {$expectIndexRejection} auth_id index satisfied the schema gate.");
+}
 $repository->assertCompatibleSchema();
 
 if ($repository->matches(1, 25)['total'] !== 1

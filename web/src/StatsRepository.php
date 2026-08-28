@@ -28,16 +28,31 @@ final class StatsRepository
         }
 
         if ($this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql') {
-            $index = $this->prepared(<<<'SQL'
-SELECT COUNT(*)
-FROM INFORMATION_SCHEMA.STATISTICS
-WHERE TABLE_SCHEMA=DATABASE()
-  AND TABLE_NAME='kgb_cw_players'
-  AND COLUMN_NAME='auth_id'
-  AND SEQ_IN_INDEX=1
-SQL);
+            $metadataColumns = $this->prepared(<<<'SQL'
+SELECT UPPER(COLUMN_NAME)
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE LOWER(TABLE_SCHEMA)='information_schema'
+  AND UPPER(TABLE_NAME)='STATISTICS'
+  AND UPPER(COLUMN_NAME) IN ('IS_VISIBLE','IGNORED')
+SQL)->fetchAll(PDO::FETCH_COLUMN);
+            $conditions = [
+                'TABLE_SCHEMA=DATABASE()',
+                "TABLE_NAME='kgb_cw_players'",
+                "COLUMN_NAME='auth_id'",
+                'SEQ_IN_INDEX=1',
+                'SUB_PART IS NULL',
+                "INDEX_TYPE IN ('BTREE','HASH')",
+            ];
+            if (in_array('IS_VISIBLE', $metadataColumns, true)) {
+                $conditions[] = "UPPER(IS_VISIBLE)='YES'";
+            }
+            if (in_array('IGNORED', $metadataColumns, true)) {
+                $conditions[] = "UPPER(IGNORED)='NO'";
+            }
+
+            $index = $this->prepared('SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE ' . implode(' AND ', $conditions));
             if ((int) $index->fetchColumn() < 1) {
-                throw new \RuntimeException('The required leading auth_id player index is missing.');
+                throw new \RuntimeException('The required full usable auth_id player index is missing.');
             }
         }
     }

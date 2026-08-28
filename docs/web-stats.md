@@ -31,15 +31,18 @@ map or player rows. Missing tables or columns fail closed with a generic 503.
 The current data contract cannot reliably map a player to Team A or Team B across side
 swaps: `last_team` records only the player's last `T`/`CT` side. The team view
 intentionally reports series outcomes and history but does not invent named
-team rosters. The browser does require an index whose leading column is
-`kgb_cw_players.auth_id`; it refuses to serve against MySQL/MariaDB without one.
+team rosters. The browser requires a normal equality-capable index whose first
+column is the complete, non-prefix `kgb_cw_players.auth_id`; an invisible or
+ignored index does not qualify on servers that expose that state. It refuses to
+serve against MySQL/MariaDB without a usable index.
 Fresh manual installs through `sql/schema.sql` include it. For an existing or
 plugin-created v0.3 table, run
 `sql/migrate-v0.3.0-web-player-index.sql` before enabling the browser. The
 migration accepts only the exact v0.3 player-table contract, is idempotent, and
-fails closed on an unexpected schema. `ALTER TABLE` can lock or rebuild the
-table depending on the database/version, so assess the live table and use an
-appropriate maintenance window.
+fails closed on an unexpected schema. An existing prefix-only index is retained
+but does not prevent the migration from adding a full index. `ALTER TABLE` can
+lock or rebuild the table depending on the database/version, so assess the live
+table and use an appropriate maintenance window.
 
 ## Deployment boundary
 
