@@ -64,6 +64,11 @@ jobs:
           esac
           ./scripts/test-build-reproducibility.sh "$package_version"
 
+      - name: Test read-only web statistics browser
+        run: |
+          ./scripts/test-web-stats.sh
+          ./scripts/test-web-stats-mariadb.sh
+
       - name: Test runtime state and filesystem regressions
         run: ./scripts/test-runtime-regressions.sh
 

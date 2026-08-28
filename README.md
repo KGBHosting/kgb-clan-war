@@ -42,6 +42,7 @@ CAL, ESL, or another league's rules.
 | `kgb_clan_war.amxx` | Enabled | Required match controller and operator commands. |
 | `kgb_clan_war_hltv.amxx` | Integration disabled | Records through a connected HLTV proxy or explicitly enabled UDP RCON. |
 | `kgb_clan_war_sql.amxx` | Integration disabled | Persists match, map, half, and player statistics with threaded SQLX queries. |
+| `web/` | Not deployed | Optional standalone, read-only PHP browser for match, map, player, and team statistics. |
 
 The optional plugins consume the lifecycle forward emitted by the core. Keep
 the core before them in `plugins.ini`.
@@ -325,6 +326,15 @@ a temporary stored procedure as well as alter the player table. Other SQLX
 drivers are not a supported v0.3.0
 configuration.
 
+The optional browser in [`web/`](web/) reads the v0.3 tables without modifying
+them. It uses native PDO prepared statements, escaped output, bounded
+pagination, opaque player links, an out-of-document-root configuration, and a
+default-deny Basic authentication boundary. Deploy it separately with
+`web/public` as the exact document root and a database account limited to
+`SELECT`; do not place database credentials in the game server package or the
+HTTP document root. The exact data semantics, privacy limits, and deployment
+example are in [`docs/web-stats.md`](docs/web-stats.md).
+
 Operators are responsible for an appropriate notice, lawful basis, access
 control, retention period, and deletion process for that personal data. The
 same applies when `kgb_cw_file_stats 1` is enabled: local files beneath
@@ -382,6 +392,8 @@ first four bytes are not the AMXX `XXMA` magic used by the Panel artifact gate.
 ./scripts/check-compatibility.sh
 ./scripts/test-runtime-regressions.sh
 ./scripts/test-sql-migration.sh
+./scripts/test-web-stats.sh
+./scripts/test-web-stats-mariadb.sh
 ./scripts/test-install.sh
 ./scripts/test-build-reproducibility.sh v0.3.0
 ```
@@ -403,6 +415,9 @@ creating a release.
 - `kgb_clan_war_hltv.amxx` and `kgb_clan_war_hltv.amxx.sha256`
 - `kgb_clan_war_sql.amxx` and `kgb_clan_war_sql.amxx.sha256`
 - `kgb-clan-war-v0.3.0.zip` and `kgb-clan-war-v0.3.0.zip.sha256`
+
+The convenience ZIP also contains the optional web statistics source and its
+example configuration. It never contains a live database or access credential.
 
 The ZIP is the convenience distribution: binaries, checksums, safe config
 examples, corresponding source, build/install scripts, license, and security
