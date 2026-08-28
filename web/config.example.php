@@ -16,7 +16,7 @@ return [
         'max_page_size' => 100,
     ],
     'access' => [
-        // "basic" is the secure default. "public" is an explicit opt-in.
+        // Basic authentication is mandatory; terminate HTTPS at the web server.
         'mode' => 'basic',
         'username' => 'stats',
         // Generate with: php -r 'echo password_hash("new password", PASSWORD_DEFAULT), PHP_EOL;'

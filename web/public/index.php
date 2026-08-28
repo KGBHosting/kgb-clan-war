@@ -6,6 +6,7 @@ use Kgb\ClanWar\Web\AccessGate;
 use Kgb\ClanWar\Web\Application;
 use Kgb\ClanWar\Web\Config;
 use Kgb\ClanWar\Web\Database;
+use Kgb\ClanWar\Web\PlayerLink;
 use Kgb\ClanWar\Web\StatsRepository;
 use Kgb\ClanWar\Web\View;
 
@@ -40,14 +41,12 @@ try {
         exit;
     }
 
-    $repository = new StatsRepository(
-        Database::connect($config['database']),
-        $config['privacy']['player_link_secret']
-    );
+    $repository = new StatsRepository(Database::connect($config['database']));
     $repository->assertCompatibleSchema();
 
     $application = new Application(
         $repository,
+        new PlayerLink($config['privacy']['player_link_secret']),
         new View(dirname(__DIR__) . '/templates', $config['site']['title']),
         $config['site']['page_size'],
         $config['site']['max_page_size'],

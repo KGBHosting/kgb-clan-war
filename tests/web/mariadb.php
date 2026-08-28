@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Kgb\ClanWar\Web\Database;
+use Kgb\ClanWar\Web\PlayerLink;
 use Kgb\ClanWar\Web\StatsRepository;
 
 require dirname(__DIR__, 2) . '/web/src/autoload.php';
@@ -11,7 +12,8 @@ $dsn = (string) getenv('KGB_CW_TEST_DSN');
 $username = (string) getenv('KGB_CW_TEST_USERNAME');
 $password = (string) getenv('KGB_CW_TEST_PASSWORD');
 $pdo = Database::connect(['dsn' => $dsn, 'username' => $username, 'password' => $password]);
-$repository = new StatsRepository($pdo, 'mariadb-test-player-link-secret-32-bytes');
+$repository = new StatsRepository($pdo);
+$playerLink = new PlayerLink('mariadb-test-player-link-secret-32-bytes');
 $repository->assertCompatibleSchema();
 
 if ($repository->matches(1, 25)['total'] !== 1
@@ -32,12 +34,19 @@ if ($repository->match('mariadb-match') === null
     throw new RuntimeException('A MariaDB detail query failed its native-prepare contract.');
 }
 
-$playerKey = hash('sha256', 'mariadb-test-player-link-secret-32-bytes' . 'STEAM_0:1:999');
-if ((int) $repository->playerByKey($playerKey)['kills'] !== 9) {
+$playerToken = $playerLink->encode('STEAM_0:1:999');
+$authId = $playerLink->decode($playerToken);
+if ($authId !== 'STEAM_0:1:999' || (int) $repository->playerByAuthId($authId)['kills'] !== 9) {
     throw new RuntimeException('MariaDB native prepared player lookup failed.');
 }
 if ($repository->playerMatches('STEAM_0:1:999', 1, 25)['total'] !== 1) {
     throw new RuntimeException('MariaDB native prepared player history failed.');
+}
+
+$explain = $pdo->prepare('EXPLAIN SELECT auth_id FROM kgb_cw_players FORCE INDEX (kgb_cw_players_auth_id) WHERE auth_id=:auth_id');
+$explain->execute(['auth_id' => 'STEAM_0:1:999']);
+if (($explain->fetch()['key'] ?? null) !== 'kgb_cw_players_auth_id') {
+    throw new RuntimeException('MariaDB could not use the leading auth_id index for exact player lookup.');
 }
 
 try {
@@ -47,4 +56,4 @@ try {
     // Expected: deployment contract uses a SELECT-only database principal.
 }
 
-printf("MariaDB native prepares, SHA2 player links, schema probes, and SELECT-only grants passed.\n");
+printf("MariaDB native prepares, indexed encrypted player links, schema probes, and SELECT-only grants passed.\n");

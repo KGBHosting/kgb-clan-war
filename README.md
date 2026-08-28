@@ -47,6 +47,12 @@ CAL, ESL, or another league's rules.
 The optional plugins consume the lifecycle forward emitted by the core. Keep
 the core before them in `plugins.ini`.
 
+The web browser is a separate operator deployment, not a game-server plugin.
+Existing or plugin-created v0.3 databases require the idempotent
+`sql/migrate-v0.3.0-web-player-index.sql` migration before it is enabled; see
+[`docs/web-stats.md`](docs/web-stats.md) for the authentication, privacy, and
+read-only database boundary.
+
 ## Safe defaults and limitations
 
 - SQL, UDP RCON, server hostname/password changes, shield changes, client demo

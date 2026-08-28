@@ -33,9 +33,9 @@ final class Input
         return $value;
     }
 
-    public static function playerKey(mixed $value): ?string
+    public static function playerToken(mixed $value): ?string
     {
-        if (!is_string($value) || !preg_match('/^[a-f0-9]{64}$/D', $value)) {
+        if (!is_string($value) || !preg_match('/^v1\.[A-Za-z0-9_-]{55,108}$/D', $value)) {
             return null;
         }
 

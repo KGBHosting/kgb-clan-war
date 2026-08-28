@@ -28,17 +28,24 @@ The SQL integration writes asynchronously and does not declare foreign keys.
 The browser therefore tolerates a match appearing briefly before its related
 map or player rows. Missing tables or columns fail closed with a generic 503.
 
-The current schema cannot reliably map a player to Team A or Team B across side
+The current data contract cannot reliably map a player to Team A or Team B across side
 swaps: `last_team` records only the player's last `T`/`CT` side. The team view
 intentionally reports series outcomes and history but does not invent named
-team rosters. No SQL plugin or schema change is required for the supported
-views.
+team rosters. The browser does require an index whose leading column is
+`kgb_cw_players.auth_id`; it refuses to serve against MySQL/MariaDB without one.
+Fresh manual installs through `sql/schema.sql` include it. For an existing or
+plugin-created v0.3 table, run
+`sql/migrate-v0.3.0-web-player-index.sql` before enabling the browser. The
+migration accepts only the exact v0.3 player-table contract, is idempotent, and
+fails closed on an unexpected schema. `ALTER TABLE` can lock or rebuild the
+table depending on the database/version, so assess the live table and use an
+appropriate maintenance window.
 
 ## Deployment boundary
 
 Requirements:
 
-- PHP 8.3 or newer with `pdo_mysql`;
+- PHP 8.3 or newer with `pdo_mysql` and `sodium`;
 - MySQL or MariaDB using the v0.3 schema;
 - HTTPS before using the built-in Basic authentication mode;
 - a dedicated database principal with `SELECT` on only the four
@@ -69,18 +76,21 @@ ownership and permissions. Point the PHP-FPM environment variable
 `KGB_CW_STATS_CONFIG` to that absolute path. Never commit or package the live
 copy.
 
-The example defaults to `access.mode = basic`; its placeholder password hash is
-invalid, so the application remains unavailable until the operator supplies a
-real `password_hash()` result. `access.mode = public` is an explicit choice and
-should be used only for intentionally public statistics or when a trusted
-reverse proxy already enforces access. In either case, keep HTTPS, database
-least privilege, and the privacy/retention boundary.
+The only supported access mode is `access.mode = basic`; its placeholder
+password hash is invalid, so the application remains unavailable until the
+operator supplies a real `password_hash()` result. Anonymous mode is not
+available. A reverse proxy may add another authentication layer, but it does
+not replace the application gate. Keep HTTPS, database least privilege, and the
+privacy/retention boundary.
 
-`privacy.player_link_secret` creates keyed, opaque player identifiers for URLs.
-Keep it stable and secret. Rotating it invalidates old player links. Raw Steam
-authentication IDs are omitted from rendered pages by default; setting
-`show_auth_ids = true` exposes them to every authorized viewer and should be
-covered by the privacy notice.
+`privacy.player_link_secret` creates authenticated, encrypted player tokens for
+URLs. PHP decrypts a valid token to one exact Steam authentication ID and then
+uses an indexed equality query; the database never hashes or scans every ID to
+resolve a link. Keep the secret stable and secret. Rotating it invalidates old
+player links. Raw Steam authentication IDs are omitted from rendered pages by
+default; `show_auth_ids` accepts only a literal PHP boolean. Setting it to
+`true` exposes IDs to every authorized viewer and should be covered by the
+privacy notice.
 
 The front controller accepts only GET and HEAD, uses an allowlisted route set,
 caps page size at 100 and page number at 1,000, executes only prepared SELECT
@@ -128,10 +138,11 @@ directory listings.
 
 The first command lints all browser/test PHP, performs a read-only SQL static
 check, and runs a SQLite in-memory test double covering routing, pagination,
-aggregates, escaping, opaque player links, and access control. The second uses
+aggregates, escaping, encrypted player links, and access control. The second uses
 the same digest-pinned MariaDB image as the SQL migration gate, exercises native
-PDO prepares and MariaDB's SHA-256 player lookup, verifies schema probes, and
-proves the test reader cannot delete data.
+PDO prepares and the exact indexed player lookup, verifies the idempotent and
+fail-closed index migration plus schema probes, and proves the test reader
+cannot delete data.
 
 For a deployed smoke test, first request the HTTPS URL without credentials and
 confirm a 401. Then use an interactive credential prompt and confirm each of the

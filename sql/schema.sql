@@ -50,5 +50,6 @@ CREATE TABLE IF NOT EXISTS kgb_cw_players (
     deaths INTEGER NOT NULL DEFAULT 0,
     headshots INTEGER NOT NULL DEFAULT 0,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (match_uid, map_number, auth_id)
+    PRIMARY KEY (match_uid, map_number, auth_id),
+    INDEX kgb_cw_players_auth_id (auth_id)
 );

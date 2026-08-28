@@ -29,6 +29,6 @@ use function Kgb\ClanWar\Web\url;
             <td><?= e($match['kills']) ?></td><td><?= e($match['deaths']) ?></td><td><?= e($match['headshots']) ?></td>
         </tr><?php endforeach; ?></tbody>
     </table>
-    <?= pagination($page, $perPage, $matches['total'], ['view' => 'player', 'id' => $player['player_key'], 'per_page' => $perPage]) ?>
+    <?= pagination($page, $perPage, $matches['total'], ['view' => 'player', 'id' => $player['player_token'], 'per_page' => $perPage]) ?>
     <?php endif; ?>
 </section>

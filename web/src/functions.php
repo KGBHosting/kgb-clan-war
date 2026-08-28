@@ -15,14 +15,14 @@ function url(array $parameters): string
     return '?' . http_build_query($parameters, '', '&', PHP_QUERY_RFC3986);
 }
 
-/** @param array{auth_id:string,player_key:string} $player */
+/** @param array{auth_id:string,player_alias:string} $player */
 function player_label(array $player, bool $showAuthIds): string
 {
     if ($showAuthIds) {
         return $player['auth_id'];
     }
 
-    return 'Player ' . strtoupper(substr($player['player_key'], 0, 10));
+    return 'Player ' . $player['player_alias'];
 }
 
 /**

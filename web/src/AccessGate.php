@@ -12,10 +12,6 @@ final class AccessGate
      */
     public static function allows(array $access, array $server): bool
     {
-        if (($access['mode'] ?? '') === 'public') {
-            return true;
-        }
-
         [$username, $password] = self::credentials($server);
         $expectedUsername = (string) ($access['username'] ?? '');
         $passwordHash = (string) ($access['password_hash'] ?? '');

@@ -15,6 +15,12 @@ final class Config
             throw new RuntimeException('KGB_CW_STATS_CONFIG must be an absolute path.');
         }
 
+        $lexicalPath = self::normalizeAbsolutePath($path);
+        $lexicalPublic = self::normalizeAbsolutePath($publicDirectory);
+        if (self::inside($lexicalPath, $lexicalPublic)) {
+            throw new RuntimeException('The statistics configuration must be outside the public document root.');
+        }
+
         $realPath = realpath($path);
         $realPublic = realpath($publicDirectory);
         if ($realPath === false || !is_file($realPath) || !is_readable($realPath)) {
@@ -53,15 +59,13 @@ final class Config
         }
 
         $mode = self::text($access, 'mode', 16);
-        if (!in_array($mode, ['basic', 'public'], true)) {
-            throw new RuntimeException('Access mode must be basic or public.');
+        if ($mode !== 'basic') {
+            throw new RuntimeException('Access mode must be basic.');
         }
-        if ($mode === 'basic') {
-            self::text($access, 'username', 128);
-            $passwordHash = self::text($access, 'password_hash', 255);
-            if (password_get_info($passwordHash)['algoName'] === 'unknown') {
-                throw new RuntimeException('Basic access requires a password_hash() result.');
-            }
+        self::text($access, 'username', 128);
+        $passwordHash = self::text($access, 'password_hash', 255);
+        if (password_get_info($passwordHash)['algoName'] === 'unknown') {
+            throw new RuntimeException('Basic access requires a password_hash() result.');
         }
 
         $playerLinkSecret = self::text($privacy, 'player_link_secret', 256);
@@ -86,7 +90,7 @@ final class Config
                 'password_hash' => (string) ($access['password_hash'] ?? ''),
             ],
             'privacy' => [
-                'show_auth_ids' => (bool) ($privacy['show_auth_ids'] ?? false),
+                'show_auth_ids' => self::boolean($privacy, 'show_auth_ids', false),
                 'player_link_secret' => $playerLinkSecret,
             ],
         ];
@@ -122,5 +126,40 @@ final class Config
         }
 
         return $value;
+    }
+
+    /** @param array<string, mixed> $section */
+    private static function boolean(array $section, string $key, bool $default): bool
+    {
+        if (!array_key_exists($key, $section)) {
+            return $default;
+        }
+        if (!is_bool($section[$key])) {
+            throw new RuntimeException("Invalid configuration value: {$key} must be a boolean.");
+        }
+
+        return $section[$key];
+    }
+
+    private static function normalizeAbsolutePath(string $path): string
+    {
+        $segments = [];
+        foreach (explode(DIRECTORY_SEPARATOR, $path) as $segment) {
+            if ($segment === '' || $segment === '.') {
+                continue;
+            }
+            if ($segment === '..') {
+                array_pop($segments);
+                continue;
+            }
+            $segments[] = $segment;
+        }
+
+        return DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, $segments);
+    }
+
+    private static function inside(string $path, string $directory): bool
+    {
+        return $path === $directory || str_starts_with($path, rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR);
     }
 }

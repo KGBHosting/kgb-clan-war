@@ -11,7 +11,6 @@ final class StatsRepository
 {
     public function __construct(
         private readonly PDO $pdo,
-        private readonly string $playerLinkSecret,
     ) {
     }
 
@@ -26,6 +25,20 @@ final class StatsRepository
 
         foreach ($probes as $probe) {
             $this->prepared($probe);
+        }
+
+        if ($this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql') {
+            $index = $this->prepared(<<<'SQL'
+SELECT COUNT(*)
+FROM INFORMATION_SCHEMA.STATISTICS
+WHERE TABLE_SCHEMA=DATABASE()
+  AND TABLE_NAME='kgb_cw_players'
+  AND COLUMN_NAME='auth_id'
+  AND SEQ_IN_INDEX=1
+SQL);
+            if ((int) $index->fetchColumn() < 1) {
+                throw new \RuntimeException('The required leading auth_id player index is missing.');
+            }
         }
     }
 
@@ -79,14 +92,13 @@ SQL;
     public function matchPlayers(string $matchUid): array
     {
         $sql = <<<'SQL'
-SELECT p.match_uid,p.map_number,p.auth_id,p.player_name,p.last_team,p.kills,p.deaths,p.headshots,p.updated_at,
-       SHA2(CONCAT(:link_secret,p.auth_id),256) AS player_key
+SELECT p.match_uid,p.map_number,p.auth_id,p.player_name,p.last_team,p.kills,p.deaths,p.headshots,p.updated_at
 FROM kgb_cw_players p
 WHERE p.match_uid=:match_uid
 ORDER BY p.map_number ASC,p.kills DESC,p.deaths ASC,p.player_name ASC
 SQL;
 
-        return $this->all($sql, ['link_secret' => $this->playerLinkSecret, 'match_uid' => $matchUid]);
+        return $this->all($sql, ['match_uid' => $matchUid]);
     }
 
     /** @return array{items:list<array<string,mixed>>,total:int} */
@@ -136,7 +148,6 @@ SQL;
         $sql = <<<'SQL'
 SELECT p.auth_id,
        (SELECT p2.player_name FROM kgb_cw_players p2 WHERE p2.auth_id=p.auth_id ORDER BY p2.updated_at DESC,p2.match_uid DESC,p2.map_number DESC LIMIT 1) AS player_name,
-       SHA2(CONCAT(:link_secret,p.auth_id),256) AS player_key,
        COUNT(DISTINCT p.match_uid) AS match_count,SUM(p.kills) AS kills,SUM(p.deaths) AS deaths,SUM(p.headshots) AS headshots
 FROM kgb_cw_players p
 INNER JOIN kgb_cw_maps mp ON mp.match_uid=p.match_uid AND mp.map_number=p.map_number
@@ -146,7 +157,7 @@ ORDER BY kills DESC,deaths ASC,player_name ASC
 LIMIT :limit
 SQL;
 
-        return $this->all($sql, ['link_secret' => $this->playerLinkSecret, 'map_name' => $mapName, 'limit' => $limit]);
+        return $this->all($sql, ['map_name' => $mapName, 'limit' => $limit]);
     }
 
     /** @return array{items:list<array<string,mixed>>,total:int} */
@@ -155,7 +166,6 @@ SQL;
         $sql = <<<'SQL'
 SELECT p.auth_id,
        (SELECT p2.player_name FROM kgb_cw_players p2 WHERE p2.auth_id=p.auth_id ORDER BY p2.updated_at DESC,p2.match_uid DESC,p2.map_number DESC LIMIT 1) AS player_name,
-       SHA2(CONCAT(:link_secret,p.auth_id),256) AS player_key,
        COUNT(DISTINCT p.match_uid) AS match_count,COUNT(*) AS map_count,
        SUM(p.kills) AS kills,SUM(p.deaths) AS deaths,SUM(p.headshots) AS headshots,MAX(p.updated_at) AS last_seen_at
 FROM kgb_cw_players p
@@ -164,28 +174,23 @@ ORDER BY kills DESC,deaths ASC,player_name ASC
 SQL;
         $count = 'SELECT COUNT(DISTINCT auth_id) FROM kgb_cw_players';
 
-        return $this->page($sql, ['link_secret' => $this->playerLinkSecret], $count, [], $page, $perPage);
+        return $this->page($sql, [], $count, [], $page, $perPage);
     }
 
     /** @return array<string,mixed>|null */
-    public function playerByKey(string $playerKey): ?array
+    public function playerByAuthId(string $authId): ?array
     {
         $sql = <<<'SQL'
 SELECT p.auth_id,
        (SELECT p2.player_name FROM kgb_cw_players p2 WHERE p2.auth_id=p.auth_id ORDER BY p2.updated_at DESC,p2.match_uid DESC,p2.map_number DESC LIMIT 1) AS player_name,
-       SHA2(CONCAT(:select_secret,p.auth_id),256) AS player_key,
        COUNT(DISTINCT p.match_uid) AS match_count,COUNT(*) AS map_count,
        SUM(p.kills) AS kills,SUM(p.deaths) AS deaths,SUM(p.headshots) AS headshots,MAX(p.updated_at) AS last_seen_at
 FROM kgb_cw_players p
-WHERE SHA2(CONCAT(:where_secret,p.auth_id),256)=:player_key
+WHERE p.auth_id=:auth_id
 GROUP BY p.auth_id
 SQL;
 
-        return $this->one($sql, [
-            'select_secret' => $this->playerLinkSecret,
-            'where_secret' => $this->playerLinkSecret,
-            'player_key' => $playerKey,
-        ]);
+        return $this->one($sql, ['auth_id' => $authId]);
     }
 
     /** @return array{items:list<array<string,mixed>>,total:int} */

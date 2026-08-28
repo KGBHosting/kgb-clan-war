@@ -6,6 +6,7 @@ use Kgb\ClanWar\Web\AccessGate;
 use Kgb\ClanWar\Web\Application;
 use Kgb\ClanWar\Web\Config;
 use Kgb\ClanWar\Web\Input;
+use Kgb\ClanWar\Web\PlayerLink;
 use Kgb\ClanWar\Web\StatsRepository;
 use Kgb\ClanWar\Web\View;
 
@@ -36,17 +37,10 @@ function insertRow(PDO $pdo, string $table, array $row): void
 $pdo = class_exists(Pdo\Sqlite::class) ? new Pdo\Sqlite('sqlite::memory:') : new PDO('sqlite::memory:');
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-$registerSqliteFunction = static function (PDO $connection, string $name, callable $callback, int $arguments): void {
-    if ($connection instanceof Pdo\Sqlite) {
-        $connection->createFunction($name, $callback, $arguments);
-        return;
-    }
-
-    $connection->sqliteCreateFunction($name, $callback, $arguments);
-};
-$registerSqliteFunction($pdo, 'CONCAT', static fn (string ...$parts): string => implode('', $parts), -1);
-$registerSqliteFunction($pdo, 'SHA2', static fn (string $value, int $bits): string => $bits === 256 ? hash('sha256', $value) : '', 2);
-$pdo->exec((string) file_get_contents(dirname(__DIR__, 2) . '/sql/schema.sql'));
+$schema = (string) file_get_contents(dirname(__DIR__, 2) . '/sql/schema.sql');
+$schema = str_replace(",\n    INDEX kgb_cw_players_auth_id (auth_id)", '', $schema);
+$pdo->exec($schema);
+$pdo->exec('CREATE INDEX kgb_cw_players_auth_id ON kgb_cw_players (auth_id)');
 
 insertRow($pdo, 'kgb_cw_matches', [
     'match_uid' => 'match-1', 'team_a_name' => 'Alpha', 'team_b_name' => '<script>Beta</script>',
@@ -91,7 +85,8 @@ foreach ([
 }
 
 $secret = 'test-only-player-link-secret-32-bytes-minimum';
-$repository = new StatsRepository($pdo, $secret);
+$repository = new StatsRepository($pdo);
+$playerLink = new PlayerLink($secret);
 $repository->assertCompatibleSchema();
 
 $matches = $repository->matches(1, 2);
@@ -106,25 +101,46 @@ check(count($repository->mapPlayers('de_dust2')) === 2, 'Map player aggregation 
 
 $players = $repository->players(1, 25);
 check($players['total'] === 2, 'Player aggregation failed.');
-$expectedPlayerKey = hash('sha256', $secret . 'STEAM_0:1:111');
-$player = $repository->playerByKey($expectedPlayerKey);
-check($player !== null && $player['player_name'] === 'Player One Latest', 'Opaque player lookup/latest name failed.');
+$player = $repository->playerByAuthId('STEAM_0:1:111');
+check($player !== null && $player['player_name'] === 'Player One Latest', 'Exact player lookup/latest name failed.');
 check((int) $player['kills'] === 27 && $repository->playerMatches($player['auth_id'], 1, 25)['total'] === 2, 'Player totals/history failed.');
+
+$queryPlan = $pdo->prepare('EXPLAIN QUERY PLAN SELECT auth_id FROM kgb_cw_players WHERE auth_id=:auth_id');
+$queryPlan->execute(['auth_id' => 'STEAM_0:1:111']);
+check(str_contains(implode(' ', array_column($queryPlan->fetchAll(), 'detail')), 'kgb_cw_players_auth_id'), 'Exact player lookup did not use the auth_id index.');
+
+$playerToken = $playerLink->encode('STEAM_0:1:111');
+$secondToken = $playerLink->encode('STEAM_0:1:111');
+check($playerToken !== $secondToken, 'Player links reused a nonce.');
+check(!str_contains($playerToken, 'STEAM_0:1:111'), 'Player link exposed the raw auth ID.');
+check($playerLink->decode($playerToken) === 'STEAM_0:1:111', 'Player link did not decrypt to the exact auth ID.');
+check($playerLink->decode($secondToken) === 'STEAM_0:1:111', 'Second randomized player link did not decrypt.');
+check((new PlayerLink('different-test-only-secret-with-32-bytes'))->decode($playerToken) === null, 'A different player-link secret decrypted the token.');
+$replacement = str_ends_with($playerToken, 'A') ? 'B' : 'A';
+$tamperedToken = substr($playerToken, 0, -1) . $replacement;
+check($playerLink->decode($tamperedToken) === null, 'A tampered player link was accepted.');
+check(Input::playerToken($playerToken) === $playerToken && Input::playerToken('v1.invalid') === null, 'Player token input validation failed.');
 
 $alpha = $repository->teamSummary('Alpha');
 check($alpha !== null && (int) $alpha['wins'] === 1 && (int) $alpha['draws'] === 1 && (int) $alpha['stopped_count'] === 1, 'Team outcomes failed.');
 check($repository->teamSummary("Alpha' OR 1=1 --") === null, 'Prepared team lookup accepted an injection-shaped value.');
 
 $view = new View(dirname(__DIR__, 2) . '/web/templates', 'Test <Stats>');
-$application = new Application($repository, $view, 25, 100, false);
-$playerPage = $application->handle(['view' => 'player', 'id' => $expectedPlayerKey]);
+$application = new Application($repository, $playerLink, $view, 25, 100, false);
+$playerPage = $application->handle(['view' => 'player', 'id' => $playerToken]);
 check($playerPage->status === 200, 'Player page failed.');
 check(!str_contains($playerPage->body, 'STEAM_0:1:111'), 'Raw auth ID leaked with show_auth_ids disabled.');
 check(str_contains($playerPage->body, 'Player One Latest'), 'Player page omitted the latest name.');
+check($application->handle(['view' => 'player', 'id' => $tamperedToken])->status === 404, 'Tampered player token did not return a generic not-found response.');
 $matchPage = $application->handle(['view' => 'match', 'id' => 'match-1']);
 check(!str_contains($matchPage->body, '<script>Beta</script>'), 'Team XSS was not escaped.');
 check(str_contains($matchPage->body, '&lt;script&gt;Beta&lt;/script&gt;'), 'Escaped team name was not rendered.');
 check(!str_contains($matchPage->body, '<img src=x onerror=alert(1)>'), 'Player-name XSS was not escaped.');
+$mapPage = $application->handle(['view' => 'map', 'id' => 'de_dust2']);
+$playersPage = $application->handle(['view' => 'players']);
+foreach ([$matchPage, $mapPage, $playersPage] as $privatePage) {
+    check(!str_contains($privatePage->body, 'STEAM_0:'), 'A raw auth ID leaked from a default player-bearing view.');
+}
 check($application->handle(['view' => 'match', 'id' => ['match-1']])->status === 404, 'Array input was not rejected.');
 check($application->handle(['view' => 'unknown'])->status === 404, 'Unknown view was not rejected.');
 
@@ -144,6 +160,22 @@ $validConfig = [
     'privacy' => ['show_auth_ids' => false, 'player_link_secret' => $secret],
 ];
 check(Config::validate($validConfig)['access']['mode'] === 'basic', 'Valid configuration was rejected.');
+check(Config::validate($validConfig)['privacy']['show_auth_ids'] === false, 'A literal false privacy flag was not preserved.');
+check(Config::validate(array_replace_recursive($validConfig, ['privacy' => ['show_auth_ids' => true]]))['privacy']['show_auth_ids'] === true, 'A literal true privacy flag was not preserved.');
+foreach (['false', 'true', 0, 1] as $unsafeBoolean) {
+    try {
+        Config::validate(array_replace_recursive($validConfig, ['privacy' => ['show_auth_ids' => $unsafeBoolean]]));
+        throw new RuntimeException('A non-boolean privacy flag was accepted.');
+    } catch (RuntimeException $exception) {
+        check($exception->getMessage() !== 'A non-boolean privacy flag was accepted.', $exception->getMessage());
+    }
+}
+try {
+    Config::validate(array_replace_recursive($validConfig, ['access' => ['mode' => 'public']]));
+    throw new RuntimeException('Anonymous public access mode was accepted.');
+} catch (RuntimeException $exception) {
+    check($exception->getMessage() !== 'Anonymous public access mode was accepted.', $exception->getMessage());
+}
 try {
     Config::validate(array_replace_recursive($validConfig, ['privacy' => ['player_link_secret' => 'short']]));
     throw new RuntimeException('Short player-link secret was accepted.');
@@ -167,6 +199,30 @@ try {
     unlink($configPath);
 }
 
+$symlinkRoot = sys_get_temp_dir() . '/kgb-cw-web-config-' . bin2hex(random_bytes(8));
+$symlinkPublic = $symlinkRoot . '/public';
+if (!mkdir($symlinkPublic, 0700, true)) {
+    throw new RuntimeException('Could not create the symlink configuration fixture.');
+}
+$symlinkTarget = $symlinkRoot . '/outside.php';
+$symlinkPath = $symlinkPublic . '/config.php';
+file_put_contents($symlinkTarget, "<?php\nreturn " . var_export($validConfig, true) . ";\n");
+chmod($symlinkTarget, 0640);
+if (!symlink($symlinkTarget, $symlinkPath)) {
+    throw new RuntimeException('Could not create the symlink configuration fixture.');
+}
+try {
+    Config::load($symlinkPath, $symlinkPublic);
+    throw new RuntimeException('A config path lexically under the public root was accepted through a symlink.');
+} catch (RuntimeException $exception) {
+    check($exception->getMessage() !== 'A config path lexically under the public root was accepted through a symlink.', $exception->getMessage());
+} finally {
+    unlink($symlinkPath);
+    unlink($symlinkTarget);
+    rmdir($symlinkPublic);
+    rmdir($symlinkRoot);
+}
+
 $pdo->exec('PRAGMA query_only=ON');
 check($repository->matches(1, 1)['total'] === 3, 'Repository failed on a read-only test connection.');
 try {
@@ -176,4 +232,4 @@ try {
     // Expected test-double behavior.
 }
 
-printf("SQLite repository, routing, escaping, opaque-link, access, and bounds checks passed.\n");
+printf("SQLite repository, indexed encrypted links, routing, escaping, access, and bounds checks passed.\n");

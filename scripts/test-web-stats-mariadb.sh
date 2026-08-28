@@ -49,6 +49,24 @@ mysql_exec() {
 
 mysql_exec < "$ROOT_DIR/sql/schema.sql"
 mysql_exec <<'SQL'
+ALTER TABLE kgb_cw_players DROP INDEX kgb_cw_players_auth_id;
+SQL
+mysql_exec < "$ROOT_DIR/sql/migrate-v0.3.0-web-player-index.sql"
+mysql_exec < "$ROOT_DIR/sql/migrate-v0.3.0-web-player-index.sql"
+
+INDEX_SIGNATURE="$(mysql_exec <<'SQL'
+SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',')
+FROM INFORMATION_SCHEMA.STATISTICS
+WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='kgb_cw_players'
+  AND INDEX_NAME='kgb_cw_players_auth_id';
+SQL
+)"
+if test "$INDEX_SIGNATURE" != 'auth_id'; then
+	printf 'The web player-index migration did not produce the expected index.\n' >&2
+	exit 1
+fi
+
+mysql_exec <<'SQL'
 INSERT INTO kgb_cw_matches
     (match_uid,team_a_name,team_b_name,status,map_number,current_half,score_a,score_b,started_at,ended_at)
 VALUES ('mariadb-match','Alpha','Beta','match_end',1,2,16,12,'2026-08-01 10:00:00','2026-08-01 11:00:00');
@@ -76,3 +94,13 @@ KGB_CW_TEST_DSN="mysql:host=127.0.0.1;port=$HOST_PORT;dbname=kgb_cw;charset=utf8
 KGB_CW_TEST_USERNAME=web_reader \
 KGB_CW_TEST_PASSWORD="$READER_PASSWORD" \
 	php "$ROOT_DIR/tests/web/mariadb.php"
+
+mysql_exec <<'SQL'
+ALTER TABLE kgb_cw_players ADD COLUMN unexpected_column INTEGER NULL;
+SQL
+if mysql_exec < "$ROOT_DIR/sql/migrate-v0.3.0-web-player-index.sql" >/dev/null 2>&1; then
+	printf 'The web player-index migration accepted an unsupported schema.\n' >&2
+	exit 1
+fi
+
+printf 'MariaDB idempotent and fail-closed web index migration checks passed.\n'

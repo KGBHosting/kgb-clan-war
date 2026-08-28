@@ -36,7 +36,7 @@ use function Kgb\ClanWar\Web\url;
     <table>
         <thead><tr><th>Player</th><th>Name</th><th>Matches</th><th>K</th><th>D</th><th>HS</th></tr></thead>
         <tbody><?php foreach ($players as $player): ?><tr>
-            <td><a href="<?= e(url(['view' => 'player', 'id' => $player['player_key']])) ?>"><?= e(player_label($player, $showAuthIds)) ?></a></td>
+            <td><a href="<?= e(url(['view' => 'player', 'id' => $player['player_token']])) ?>"><?= e(player_label($player, $showAuthIds)) ?></a></td>
             <td><?= e($player['player_name']) ?></td><td><?= e($player['match_count']) ?></td>
             <td><?= e($player['kills']) ?></td><td><?= e($player['deaths']) ?></td><td><?= e($player['headshots']) ?></td>
         </tr><?php endforeach; ?></tbody>

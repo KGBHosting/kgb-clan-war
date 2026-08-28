@@ -53,7 +53,7 @@ use function Kgb\ClanWar\Web\url;
         <thead><tr><th>Map</th><th>Player</th><th>Name</th><th>Last side</th><th>K</th><th>D</th><th>HS</th></tr></thead>
         <tbody><?php foreach ($players as $player): ?><tr>
             <td><?= e($player['map_number']) ?></td>
-            <td><a href="<?= e(url(['view' => 'player', 'id' => $player['player_key']])) ?>"><?= e(player_label($player, $showAuthIds)) ?></a></td>
+            <td><a href="<?= e(url(['view' => 'player', 'id' => $player['player_token']])) ?>"><?= e(player_label($player, $showAuthIds)) ?></a></td>
             <td><?= e($player['player_name']) ?></td><td><?= e($player['last_team']) ?></td>
             <td><?= e($player['kills']) ?></td><td><?= e($player['deaths']) ?></td><td><?= e($player['headshots']) ?></td>
         </tr><?php endforeach; ?></tbody>

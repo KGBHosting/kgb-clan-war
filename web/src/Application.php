@@ -8,6 +8,7 @@ final class Application
 {
     public function __construct(
         private readonly StatsRepository $repository,
+        private readonly PlayerLink $playerLink,
         private readonly View $view,
         private readonly int $defaultPageSize,
         private readonly int $maximumPageSize,
@@ -55,7 +56,7 @@ final class Application
             'match' => $match,
             'maps' => $this->repository->matchMaps($matchUid),
             'halves' => $this->repository->matchHalves($matchUid),
-            'players' => $this->repository->matchPlayers($matchUid),
+            'players' => $this->decoratePlayers($this->repository->matchPlayers($matchUid)),
             'showAuthIds' => $this->showAuthIds,
         ]));
     }
@@ -79,7 +80,7 @@ final class Application
         return new Response(200, $this->view->render('map', 'Map ' . $mapName, [
             'summary' => $summary,
             'matches' => $this->repository->mapMatches($mapName, $page, $perPage),
-            'players' => $this->repository->mapPlayers($mapName),
+            'players' => $this->decoratePlayers($this->repository->mapPlayers($mapName)),
             'page' => $page,
             'perPage' => $perPage,
             'showAuthIds' => $this->showAuthIds,
@@ -88,8 +89,11 @@ final class Application
 
     private function players(int $page, int $perPage): Response
     {
+        $result = $this->repository->players($page, $perPage);
+        $result['items'] = $this->decoratePlayers($result['items']);
+
         return new Response(200, $this->view->render('players', 'Players', [
-            'result' => $this->repository->players($page, $perPage),
+            'result' => $result,
             'page' => $page,
             'perPage' => $perPage,
             'showAuthIds' => $this->showAuthIds,
@@ -98,10 +102,12 @@ final class Application
 
     private function player(mixed $value, int $page, int $perPage): Response
     {
-        $playerKey = Input::playerKey($value);
-        if ($playerKey === null || ($player = $this->repository->playerByKey($playerKey)) === null) {
+        $playerToken = Input::playerToken($value);
+        $authId = $playerToken === null ? null : $this->playerLink->decode($playerToken);
+        if ($authId === null || ($player = $this->repository->playerByAuthId($authId)) === null) {
             return $this->notFound();
         }
+        $player = $this->decoratePlayer($player);
 
         return new Response(200, $this->view->render('player', 'Player ' . $player['player_name'], [
             'player' => $player,
@@ -141,5 +147,21 @@ final class Application
         return new Response(404, $this->view->render('error', 'Not found', [
             'message' => 'The requested statistics view was not found.',
         ]));
+    }
+
+    /** @param list<array<string,mixed>> $players @return list<array<string,mixed>> */
+    private function decoratePlayers(array $players): array
+    {
+        return array_map(fn (array $player): array => $this->decoratePlayer($player), $players);
+    }
+
+    /** @param array<string,mixed> $player @return array<string,mixed> */
+    private function decoratePlayer(array $player): array
+    {
+        $authId = (string) $player['auth_id'];
+        $player['player_token'] = $this->playerLink->encode($authId);
+        $player['player_alias'] = $this->playerLink->alias($authId);
+
+        return $player;
     }
 }
