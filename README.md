@@ -165,6 +165,13 @@ restarts the current half; use `amx_cw_relo3` when the score must be preserved.
 shows only state-appropriate actions and asks for confirmation before a whole-
 match reset or stop.
 
+After a validated map-two or persistent-PUG change is queued, the root menu
+temporarily exposes only status and the read-only ready list. Direct commands
+that could restart, stop, replace, or otherwise mutate the match are rejected
+until the change completes or its scheduled validator fails safely. This lock
+preserves the cross-map/PUG transition owner that `plugin_end` must carry into
+the next map.
+
 ## Core configuration
 
 The installer creates

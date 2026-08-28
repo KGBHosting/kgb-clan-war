@@ -342,6 +342,89 @@ require_string "$CORE" 'stock show_match_length_menu(id)'
 require_string "$CORE" 'stock show_min_ready_menu(id)'
 require_string "$CORE" 'set_pcvar_num(g_CvarMinReady, clamp(str_to_num(info), 1, 32))'
 
+# Once a map change owns either the cross-map series envelope or the persistent
+# PUG marker, no admin command or stale menu may cancel its scheduled task.
+# plugin_end must preserve that owner for the next plugin instance.
+require_string "$CORE" 'stock bool:map_transition_blocks_mutation(id, bool:chatFeedback)'
+require_string "$CORE" 'if (!g_MapChangePending) return false'
+require_string "$CORE" 'CW_ERR_MAP_CHANGE_PENDING'
+require_string "$CORE" 'if (g_MapChangePending && !equal(info, "status") && !equal(info, "ready_list"))'
+require_string "$CORE" 'menu_destroy(menu); cw_chat_ml(id, "CW_ERR_MAP_CHANGE_PENDING"); show_control_menu(id)'
+require_string "$CORE" 'if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED'
+require_string "$CORE" 'if (map_transition_blocks_mutation(id, true)) return PLUGIN_HANDLED'
+
+plugin_end_block="$(awk '/public plugin_end\(\)/,/public client_putinserver\(id\)/' "$CORE")"
+grep -Fq 'if (!g_MapChangePending)' <<<"$plugin_end_block"
+grep -Fq 'clear_pug_resume_state()' <<<"$plugin_end_block"
+grep -Fq 'discard_series_manifest()' <<<"$plugin_end_block"
+
+control_menu_block="$(awk '/stock show_control_menu\(id\)/,/stock bool:control_swap_allowed\(\)/' "$CORE")"
+pending_menu_line="$(grep -n 'if (g_MapChangePending)' <<<"$control_menu_block" | cut -d: -f1 | head -1)"
+restart_menu_line="$(grep -n 'CW_MENU_RESTART_MATCH' <<<"$control_menu_block" | cut -d: -f1 | head -1)"
+test -n "$pending_menu_line" && test -n "$restart_menu_line" && test "$pending_menu_line" -lt "$restart_menu_line"
+
+for function_range in \
+	'stock bool:start_warmup(bool:resetData)|stock start_knife_round()' \
+	'stock start_knife_round()|stock start_live_match(bool:preserveSides)' \
+	'stock start_live_match(bool:preserveSides)|stock begin_lo3(bool:resetRoundTracking' \
+	'stock begin_lo3(bool:resetRoundTracking|stock close_active_lifecycle' \
+	'stock stop_match(bool:administrator)|stock restart_current_half()' \
+	'stock restart_current_half()|stock bool:restart_whole_match' \
+	'stock bool:restart_whole_match|stock set_player_ready'; do
+	start="${function_range%%|*}"
+	end="${function_range#*|}"
+	block="$(awk -v start="$start" -v end="$end" 'index($0, start) { active=1 } active { print } active && index($0, end) && !index($0, start) { exit }' "$CORE")"
+	grep -Fq 'map_transition_blocks_mutation' <<<"$block" || {
+		printf 'Missing pending-map mutation guard in function range: %s\n' "$function_range" >&2
+		exit 1
+	}
+done
+
+cancel_block="$(awk '/stock cancel_transition_tasks\(\)/,/stock cancel_lo3_tasks\(\)/' "$CORE")"
+grep -Fq 'remove_task(TASK_MAP_CHANGE)' <<<"$cancel_block"
+grep -Fq 'remove_task(TASK_PUG_MAP_CHANGE)' <<<"$cancel_block"
+if grep -Fq 'g_MapChangePending' <<<"$cancel_block"; then
+	printf 'Generic task cancellation unexpectedly claims or clears the durable map-change owner.\n' >&2
+	exit 1
+fi
+
+crossmap_block="$(awk '/stock begin_map_transition\(\)/,/stock finish_match\(bool:stopped/' "$CORE")"
+crossmap_owner_line="$(grep -n 'persist_crossmap_state()' <<<"$crossmap_block" | cut -d: -f1 | head -1)"
+crossmap_pending_line="$(grep -n 'g_MapChangePending = true' <<<"$crossmap_block" | cut -d: -f1 | head -1)"
+crossmap_task_line="$(grep -n 'TASK_MAP_CHANGE' <<<"$crossmap_block" | cut -d: -f1 | head -1)"
+test "$crossmap_owner_line" -lt "$crossmap_pending_line" && test "$crossmap_pending_line" -lt "$crossmap_task_line"
+
+pug_transition_block="$(awk '/stock bool:schedule_persistent_pug_advance\(/,/public task_change_pug_map\(\)/' "$CORE")"
+pug_owner_line="$(grep -n 'set_localinfo(LI_PUG_RESUME, "1")' <<<"$pug_transition_block" | cut -d: -f1 | head -1)"
+pug_pending_line="$(grep -n 'g_MapChangePending = true' <<<"$pug_transition_block" | cut -d: -f1 | head -1)"
+pug_task_line="$(grep -n 'TASK_PUG_MAP_CHANGE' <<<"$pug_transition_block" | tail -1 | cut -d: -f1)"
+test "$pug_owner_line" -lt "$pug_pending_line" && test "$pug_pending_line" -lt "$pug_task_line"
+
+attempt_pending_mutation() {
+	# A rejected control must preserve all durable and scheduled ownership.
+	test "$map_change_pending" -eq 1 && return
+	map_task_queued=0
+	crossmap_owner=0
+	pug_owner=0
+}
+plugin_end_model() {
+	if test "$map_change_pending" -ne 1; then
+		crossmap_owner=0
+		pug_owner=0
+	fi
+}
+for owner_type in crossmap pug; do
+	map_change_pending=1
+	map_task_queued=1
+	crossmap_owner=0
+	pug_owner=0
+	if test "$owner_type" = crossmap; then crossmap_owner=1; else pug_owner=1; fi
+	attempt_pending_mutation
+	plugin_end_model
+	test "$map_change_pending|$map_task_queued" = '1|1'
+	if test "$owner_type" = crossmap; then test "$crossmap_owner|$pug_owner" = '1|0'; else test "$crossmap_owner|$pug_owner" = '0|1'; fi
+done
+
 # Model the SQL callback contract deterministically. A transient failure does
 # not advance the acknowledged session baseline; retries and overlapping
 # callbacks use absolute maxima, so either callback order is idempotent.

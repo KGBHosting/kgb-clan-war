@@ -403,13 +403,13 @@ public command_menu(id, level, cid)
 
 public command_warmup(id, level, cid)
 {
-    if (cmd_access(id, level, cid, 1) && mode_enabled(id)) start_warmup(true)
+    if (cmd_access(id, level, cid, 1) && mode_enabled(id) && !map_transition_blocks_mutation(id, false)) start_warmup(true)
     return PLUGIN_HANDLED
 }
 
 public command_knife(id, level, cid)
 {
-    if (cmd_access(id, level, cid, 1) && mode_enabled(id)) start_knife_round()
+    if (cmd_access(id, level, cid, 1) && mode_enabled(id) && !map_transition_blocks_mutation(id, false)) start_knife_round()
     return PLUGIN_HANDLED
 }
 
@@ -417,6 +417,7 @@ public command_live(id, level, cid)
 {
     if (cmd_access(id, level, cid, 1) && mode_enabled(id))
     {
+        if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
         if (g_State == STATE_HALF_READY) resume_ready_half()
         else start_live_match(g_State == STATE_WARMUP && g_KnifeDecisionMade)
     }
@@ -426,6 +427,7 @@ public command_live(id, level, cid)
 public command_relo3(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     if (g_State != STATE_LIVE) cw_console_ml(id, "CW_ERR_NOT_LIVE")
     else begin_lo3(false)
     return PLUGIN_HANDLED
@@ -434,6 +436,7 @@ public command_relo3(id, level, cid)
 public command_legacy_relo3(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     if (g_State != STATE_LIVE) cw_console_ml(id, "CW_ERR_NOT_LIVE")
     else restart_current_half()
     return PLUGIN_HANDLED
@@ -442,6 +445,7 @@ public command_legacy_relo3(id, level, cid)
 public command_swap(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     if (g_Lo3Running || g_State == STATE_HALFTIME || g_State == STATE_HALF_READY || g_State == STATE_OVERTIME_VOTE || g_State == STATE_PLAYOUT_VOTE) cw_console_ml(id, "CW_ERR_TRANSITION")
     else
     {
@@ -456,6 +460,7 @@ public command_swap(id, level, cid)
 public command_restart_half(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     if (g_State != STATE_LIVE) cw_console_ml(id, "CW_ERR_NOT_LIVE")
     else restart_current_half()
     return PLUGIN_HANDLED
@@ -465,6 +470,7 @@ public command_restart_match(id, level, cid)
 {
     if (cmd_access(id, level, cid, 1) && mode_enabled(id))
     {
+        if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
         restart_whole_match(id, false)
     }
     return PLUGIN_HANDLED
@@ -485,6 +491,7 @@ public command_ready_list(id, level, cid)
 public command_pug_randomize(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     if (!get_pcvar_num(g_CvarPugMode)) cw_console_ml(id, "CW_ERR_PUG_DISABLED")
     else if (g_State != STATE_OFF && g_State != STATE_WARMUP) cw_console_ml(id, "CW_ERR_PUG_STATE")
     else randomize_pug_teams()
@@ -494,6 +501,7 @@ public command_pug_randomize(id, level, cid)
 public command_pug_start(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     if (!get_pcvar_num(g_CvarPugMode))
     {
         cw_console_ml(id, "CW_ERR_PUG_DISABLED")
@@ -527,6 +535,7 @@ public command_pug_start(id, level, cid)
 public command_pug_assign(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 3) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     if (!get_pcvar_num(g_CvarPugMode) || !g_PugActive || g_State != STATE_WARMUP)
     {
         cw_console_ml(id, "CW_ERR_PUG_ASSIGN_STATE")
@@ -561,6 +570,7 @@ public command_pug_stop(id, level, cid)
         cw_console_ml(id, "CW_ERR_RECOVERY_PENDING")
         return PLUGIN_HANDLED
     }
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     if (!g_PugActive) cw_console_ml(id, "CW_ERR_NO_PUG")
     else
     {
@@ -697,6 +707,7 @@ public command_stop(id, level, cid)
         cw_console_ml(id, "CW_ERR_RECOVERY_PENDING")
         return PLUGIN_HANDLED
     }
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     stop_match(true)
     return PLUGIN_HANDLED
 }
@@ -761,6 +772,7 @@ public command_scoreids_snapshot(id, level, cid)
 public command_legacy_match(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 3) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     if (!safe_configuration_state(id)) return PLUGIN_HANDLED
     if (read_argc() >= 5)
     {
@@ -836,7 +848,8 @@ public command_legacy_match(id, level, cid)
 
 public command_legacy_match2(id, level, cid)
 {
-    if (!cmd_access(id, level, cid, 3) || !mode_enabled(id) || !safe_configuration_state(id)) return PLUGIN_HANDLED
+    if (!cmd_access(id, level, cid, 3) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false) || !safe_configuration_state(id)) return PLUGIN_HANDLED
     new teamA[MAX_TEAM_NAME + 1], teamB[MAX_TEAM_NAME + 1], rule[16], config[MAX_CONFIG_TOKEN + 1], recordMode[16]
     get_pcvar_string(g_CvarTeamAName, teamA, charsmax(teamA)); get_pcvar_string(g_CvarTeamBName, teamB, charsmax(teamB))
     read_argv(1, rule, charsmax(rule)); read_argv(2, config, charsmax(config)); read_argv(3, recordMode, charsmax(recordMode))
@@ -846,7 +859,8 @@ public command_legacy_match2(id, level, cid)
 
 public command_legacy_match3(id, level, cid)
 {
-    if (!cmd_access(id, level, cid, 6) || !mode_enabled(id) || !safe_configuration_state(id)) return PLUGIN_HANDLED
+    if (!cmd_access(id, level, cid, 6) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false) || !safe_configuration_state(id)) return PLUGIN_HANDLED
     new teamA[MAX_TEAM_NAME + 1], teamB[MAX_TEAM_NAME + 1], rule[16], config[MAX_CONFIG_TOKEN + 1], map2[MAX_MAP_TOKEN + 1], recordMode[16]
     read_argv(1, teamA, charsmax(teamA)); read_argv(2, teamB, charsmax(teamB)); read_argv(3, rule, charsmax(rule))
     read_argv(4, config, charsmax(config)); read_argv(5, map2, charsmax(map2)); read_argv(6, recordMode, charsmax(recordMode))
@@ -856,7 +870,8 @@ public command_legacy_match3(id, level, cid)
 
 public command_legacy_match4(id, level, cid)
 {
-    if (!cmd_access(id, level, cid, 4) || !mode_enabled(id) || !safe_configuration_state(id)) return PLUGIN_HANDLED
+    if (!cmd_access(id, level, cid, 4) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false) || !safe_configuration_state(id)) return PLUGIN_HANDLED
     new teamA[MAX_TEAM_NAME + 1], teamB[MAX_TEAM_NAME + 1], rule[16], config[MAX_CONFIG_TOKEN + 1], map2[MAX_MAP_TOKEN + 1], recordMode[16]
     get_pcvar_string(g_CvarTeamAName, teamA, charsmax(teamA)); get_pcvar_string(g_CvarTeamBName, teamB, charsmax(teamB))
     read_argv(1, rule, charsmax(rule)); read_argv(2, config, charsmax(config)); read_argv(3, map2, charsmax(map2)); read_argv(4, recordMode, charsmax(recordMode))
@@ -1091,12 +1106,14 @@ public command_say(id)
     if ((equali(text, "/relo3") || equali(text, "!relo3")) && (get_user_flags(id) & ADMIN_CFG))
     {
         if (!mode_enabled(id)) return PLUGIN_HANDLED
+        if (map_transition_blocks_mutation(id, true)) return PLUGIN_HANDLED
         if (g_State == STATE_LIVE) restart_current_half()
         else cw_chat_ml(id, "CW_ERR_NOT_LIVE")
         return PLUGIN_HANDLED
     }
     if ((equali(text, "/stop") || equali(text, "!stop")) && (get_user_flags(id) & ADMIN_CFG))
     {
+        if (map_transition_blocks_mutation(id, true)) return PLUGIN_HANDLED
         if (crossmap_recovery_pending())
         {
             cw_console_ml(id, "CW_ERR_RECOVERY_PENDING")
@@ -1109,6 +1126,7 @@ public command_say(id)
     {
         if (mode_enabled(id))
         {
+            if (map_transition_blocks_mutation(id, true)) return PLUGIN_HANDLED
             restart_whole_match(id, true)
         }
         return PLUGIN_HANDLED
@@ -1126,6 +1144,7 @@ public command_say(id)
     {
         if (mode_enabled(id))
         {
+            if (map_transition_blocks_mutation(id, true)) return PLUGIN_HANDLED
             if (g_State == STATE_HALF_READY) resume_ready_half()
             else start_live_match(g_State == STATE_WARMUP && g_KnifeDecisionMade)
         }
@@ -1144,6 +1163,12 @@ public menu_control_handler(id, menu, item)
     new access, info[24], label[64], callback
     menu_item_getinfo(menu, item, access, info, charsmax(info), label, charsmax(label), callback)
     menu_destroy(menu)
+
+    if (g_MapChangePending && !equal(info, "status") && !equal(info, "ready_list"))
+    {
+        cw_chat_ml(id, "CW_ERR_MAP_CHANGE_PENDING")
+        return PLUGIN_HANDLED
+    }
 
     if (equal(info, "warmup") && (g_State == STATE_OFF || g_State == STATE_WARMUP || g_State == STATE_KNIFE || g_State == STATE_KNIFE_VOTE)) start_warmup(true)
     else if (equal(info, "knife") && (g_State == STATE_OFF || g_State == STATE_WARMUP)) start_knife_round()
@@ -1171,6 +1196,11 @@ public menu_restart_confirm_handler(id, menu, item)
         menu_destroy(menu)
         return PLUGIN_HANDLED
     }
+    if (g_MapChangePending)
+    {
+        menu_destroy(menu); cw_chat_ml(id, "CW_ERR_MAP_CHANGE_PENDING"); show_control_menu(id)
+        return PLUGIN_HANDLED
+    }
     new access, info[8], label[64], callback
     menu_item_getinfo(menu, item, access, info, charsmax(info), label, charsmax(label), callback)
     menu_destroy(menu)
@@ -1184,6 +1214,11 @@ public menu_stop_confirmation_handler(id, menu, item)
     if (item == MENU_EXIT || !(get_user_flags(id) & ADMIN_CFG) || !get_pcvar_num(g_CvarEnabled) || crossmap_recovery_pending())
     {
         menu_destroy(menu)
+        return PLUGIN_HANDLED
+    }
+    if (g_MapChangePending)
+    {
+        menu_destroy(menu); cw_chat_ml(id, "CW_ERR_MAP_CHANGE_PENDING"); show_control_menu(id)
         return PLUGIN_HANDLED
     }
     new access, info[8], label[64], callback
@@ -1667,10 +1702,25 @@ stock bool:mode_enabled(id)
     return false
 }
 
+stock bool:map_transition_blocks_mutation(id, bool:chatFeedback)
+{
+    if (!g_MapChangePending) return false
+    if (chatFeedback && id > 0) cw_chat_ml(id, "CW_ERR_MAP_CHANGE_PENDING")
+    else cw_console_ml(id, "CW_ERR_MAP_CHANGE_PENDING")
+    return true
+}
+
 stock show_control_menu(id)
 {
     refresh_branding(false)
     new menu = menu_create(g_DisplayName, "menu_control_handler"), label[64]
+    if (g_MapChangePending)
+    {
+        ml_text(id, "CW_MENU_STATUS", label, charsmax(label)); menu_additem(menu, label, "status")
+        ml_text(id, "CW_MENU_READY_LIST", label, charsmax(label)); menu_additem(menu, label, "ready_list")
+        menu_setprop(menu, MPROP_EXIT, MEXIT_ALL); menu_display(id, menu)
+        return
+    }
     if (g_State == STATE_OFF || g_State == STATE_WARMUP || g_State == STATE_KNIFE || g_State == STATE_KNIFE_VOTE)
     {
         ml_text(id, "CW_MENU_WARMUP", label, charsmax(label)); menu_additem(menu, label, "warmup")
@@ -2591,6 +2641,7 @@ stock cw_chat_ml(id, const key[], any:...)
 
 stock bool:start_warmup(bool:resetData)
 {
+    if (map_transition_blocks_mutation(0, false)) return false
     if (!full_runtime_config_valid(false))
     {
         announce_ml("CW_ERR_WARMUP_CONFIG")
@@ -2619,6 +2670,7 @@ stock bool:start_warmup(bool:resetData)
 
 stock start_knife_round()
 {
+    if (map_transition_blocks_mutation(0, false)) return
     if (!full_runtime_config_valid(false))
     {
         announce_ml("CW_ERR_KNIFE_CONFIG")
@@ -2636,6 +2688,7 @@ stock start_knife_round()
 
 stock start_live_match(bool:preserveSides)
 {
+    if (map_transition_blocks_mutation(0, false)) return
     new bool:restarting = g_State == STATE_LIVE || g_State == STATE_HALFTIME || g_State == STATE_HALF_READY || g_State == STATE_OVERTIME_VOTE || g_State == STATE_PLAYOUT_VOTE
     if (!full_runtime_config_valid(true))
     {
@@ -2672,6 +2725,7 @@ stock start_live_match(bool:preserveSides)
 
 stock begin_lo3(bool:resetRoundTracking, bool:resetTlTimer = false)
 {
+    if (map_transition_blocks_mutation(0, false)) return
     new bool:resetTimerAfterLo3 = resetTlTimer || g_ResetTlTimerAfterLo3
     cancel_lo3_tasks(); if (resetRoundTracking) g_RoundsThisHalf = 0
     g_ResetTlTimerAfterLo3 = resetTimerAfterLo3
@@ -2693,6 +2747,7 @@ stock close_active_lifecycle(const statsEvent[])
 
 stock stop_match(bool:administrator)
 {
+    if (map_transition_blocks_mutation(0, false)) return
     if (crossmap_recovery_pending())
     {
         log_amx("Refused to stop match while cross-map baseline recovery is pending")
@@ -2720,6 +2775,7 @@ stock stop_match(bool:administrator)
 
 stock restart_current_half()
 {
+    if (map_transition_blocks_mutation(0, false)) return
     g_TeamAScore = g_HalfStartA; g_TeamBScore = g_HalfStartB; g_RoundsThisHalf = 0
     g_CaptureHalfBaselineAfterLo3 = true
     audit_event("admin_restart_half"); begin_lo3(false, true)
@@ -2728,6 +2784,7 @@ stock restart_current_half()
 
 stock bool:restart_whole_match(id, bool:chatFeedback)
 {
+    if (map_transition_blocks_mutation(id, chatFeedback)) return false
     if (g_State == STATE_OFF)
     {
         if (chatFeedback) cw_chat_ml(id, "CW_ERR_RESTART_OFF")
