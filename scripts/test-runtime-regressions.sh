@@ -292,6 +292,220 @@ test "$frozen_enabled" -eq 1 && test "$frozen_auto" -eq 1 && test "$live_cvar_en
 require_string "$CORE" 'new bool:resetTimerAfterLo3 = resetTlTimer || g_ResetTlTimerAfterLo3'
 require_string "$CORE" 'if (g_ResetTlTimerAfterLo3 && g_Format == FORMAT_TL && !g_InOvertime) schedule_time_limit_half()'
 
+# KGB's explicit re-LO3 preserves the score, while the legacy Deluxe alias and
+# chat shortcut restore the current-half baseline before running LO3. A whole-
+# match restart cannot create a match from the off state.
+kgb_relo3_block="$(awk '/public command_relo3\(id, level, cid\)/,/public command_legacy_relo3\(id, level, cid\)/' "$CORE")"
+legacy_relo3_block="$(awk '/public command_legacy_relo3\(id, level, cid\)/,/public command_swap\(id, level, cid\)/' "$CORE")"
+chat_relo3_block="$(awk '/if \(\(equali\(text, "\/relo3"\)/,/if \(\(equali\(text, "\/stop"\)/' "$CORE")"
+grep -Fq 'else begin_lo3(false)' <<<"$kgb_relo3_block"
+if grep -Fq 'restart_current_half()' <<<"$kgb_relo3_block"; then
+	printf 'KGB-specific amx_cw_relo3 unexpectedly resets the current-half score.\n' >&2
+	exit 1
+fi
+grep -Fq 'else restart_current_half()' <<<"$legacy_relo3_block"
+grep -Fq 'if (g_State == STATE_LIVE) restart_current_half()' <<<"$chat_relo3_block"
+require_string "$CORE" 'register_concmd("amx_matchrelo3", "command_legacy_relo3", ADMIN_CFG'
+require_string "$CORE" 'stock bool:start_live_match(bool:preserveSides)'
+require_string "$CORE" 'stock bool:restart_whole_match(id, bool:chatFeedback)'
+restart_off_line="$(awk '/stock bool:restart_whole_match\(id, bool:chatFeedback\)/,/stock set_player_ready\(id, bool:isReady\)/ { if (index($0, "g_State == STATE_OFF")) { print NR; exit } }' "$CORE")"
+restart_start_line="$(awk '/stock bool:restart_whole_match\(id, bool:chatFeedback\)/,/stock set_player_ready\(id, bool:isReady\)/ { if (index($0, "if (!start_live_match(false))")) { print NR; exit } }' "$CORE")"
+restart_error_line="$(awk '/stock bool:restart_whole_match\(id, bool:chatFeedback\)/,/stock set_player_ready\(id, bool:isReady\)/ { if (index($0, "CW_ERR_RESTART_FAILED")) { print NR; exit } }' "$CORE")"
+restart_audit_line="$(awk '/stock bool:restart_whole_match\(id, bool:chatFeedback\)/,/stock set_player_ready\(id, bool:isReady\)/ { if (index($0, "audit_event(\"admin_restart_match\")")) { print NR; exit } }' "$CORE")"
+restart_true_line="$(awk '/stock bool:restart_whole_match\(id, bool:chatFeedback\)/,/stock set_player_ready\(id, bool:isReady\)/ { if (index($0, "return true")) { print NR; exit } }' "$CORE")"
+test -n "$restart_off_line" && test -n "$restart_start_line" && test -n "$restart_error_line"
+test -n "$restart_audit_line" && test -n "$restart_true_line"
+test "$restart_off_line" -lt "$restart_start_line"
+test "$restart_start_line" -lt "$restart_error_line"
+test "$restart_error_line" -lt "$restart_audit_line"
+test "$restart_audit_line" -lt "$restart_true_line"
+
+# The four pre-existing fire-and-report launch paths intentionally rely on the
+# global localized configuration announcement, while the destructive restart
+# caller must consume the result and provide command/menu-specific feedback.
+test "$(grep -Fc 'start_live_match(' "$CORE")" -eq 6
+for caller_range in \
+	'public command_live(id, level, cid)|public command_relo3(id, level, cid)' \
+	'if ((equali(text, "/start")|public menu_control_handler(id, menu, item)' \
+	'public menu_control_handler(id, menu, item)|public menu_restart_confirm_handler(id, menu, item)' \
+	'stock check_auto_live()|stock ready_count()'; do
+	start="${caller_range%%|*}"
+	end="${caller_range#*|}"
+	block="$(awk -v start="$start" -v end="$end" 'index($0, start) { active=1 } active { print } active && index($0, end) && !index($0, start) { exit }' "$CORE")"
+	grep -Fq 'start_live_match(' <<<"$block" || {
+		printf 'Missing audited start-live caller in function range: %s\n' "$caller_range" >&2
+		exit 1
+	}
+done
+restart_block="$(awk '/stock bool:restart_whole_match\(id, bool:chatFeedback\)/,/stock set_player_ready\(id, bool:isReady\)/' "$CORE")"
+grep -Fq 'if (!start_live_match(false))' <<<"$restart_block"
+grep -Fq 'CW_ERR_RESTART_FAILED' <<<"$restart_block"
+start_live_block="$(awk '/stock bool:start_live_match\(bool:preserveSides\)/,/stock begin_lo3\(bool:resetRoundTracking/' "$CORE")"
+grep -Fq 'return false' <<<"$start_live_block"
+grep -Fq 'return true' <<<"$start_live_block"
+start_validation_line="$(grep -n 'full_runtime_config_valid(true)' <<<"$start_live_block" | cut -d: -f1 | head -1)"
+start_close_line="$(grep -n 'close_active_lifecycle("restart_match_stop")' <<<"$start_live_block" | cut -d: -f1 | head -1)"
+start_identity_line="$(grep -n 'create_match_id()' <<<"$start_live_block" | cut -d: -f1 | head -1)"
+start_success_line="$(grep -n 'return true' <<<"$start_live_block" | cut -d: -f1 | head -1)"
+test -n "$start_validation_line" && test -n "$start_close_line" && test -n "$start_identity_line" && test -n "$start_success_line"
+test "$start_validation_line" -lt "$start_close_line"
+test "$start_close_line" -lt "$start_identity_line"
+test "$start_identity_line" -lt "$start_success_line"
+if grep -Fq 'admin_restart_match' <<<"$start_live_block"; then
+	printf 'Start-live helper must not claim a successful admin restart.\n' >&2
+	exit 1
+fi
+
+half_start_a=5
+half_start_b=4
+score_a=8
+score_b=6
+# amx_cw_relo3: begin_lo3(false), scores stay untouched.
+test "$score_a|$score_b" = '8|6'
+# amx_matchrelo3 and /relo3: restart_current_half(), scores return to baseline.
+score_a="$half_start_a"
+score_b="$half_start_b"
+test "$score_a|$score_b" = '5|4'
+match_state=off
+restart_count=0
+if test "$match_state" != off; then restart_count=$((restart_count + 1)); fi
+test "$restart_count" -eq 0
+
+# Model a rejected destructive restart. Invalid launch input must not change
+# state, match identity, or score, must report failure, and must not emit the
+# successful admin restart audit. The success path does all three explicitly.
+match_state=live
+match_id=existing-match
+score_a=8
+score_b=6
+runtime_valid=0
+restart_audits=0
+restart_errors=0
+start_live_model() {
+	test "$runtime_valid" -eq 1 || return 1
+	match_state=live
+	match_id=new-match
+	score_a=0
+	score_b=0
+}
+restart_whole_model() {
+	if ! start_live_model; then
+		restart_errors=$((restart_errors + 1))
+		return 1
+	fi
+	restart_audits=$((restart_audits + 1))
+}
+before_restart="$match_state|$match_id|$score_a|$score_b"
+if restart_whole_model; then
+	printf 'Rejected whole-match restart unexpectedly reported success.\n' >&2
+	exit 1
+fi
+test "$match_state|$match_id|$score_a|$score_b" = "$before_restart"
+test "$restart_audits|$restart_errors" = '0|1'
+runtime_valid=1
+restart_whole_model
+test "$match_state|$match_id|$score_a|$score_b" = 'live|new-match|0|0'
+test "$restart_audits|$restart_errors" = '1|1'
+
+# The root menu is state-aware, destructive whole-match operations are
+# confirmed, and read-only ready information is available without admin flags.
+require_string "$CORE" 'stock bool:control_swap_allowed()'
+require_string "$CORE" 'stock show_restart_match_confirmation(id)'
+require_string "$CORE" 'stock show_stop_confirmation(id)'
+require_string "$CORE" 'public menu_restart_confirm_handler(id, menu, item)'
+require_string "$CORE" 'public menu_stop_confirmation_handler(id, menu, item)'
+require_string "$CORE" 'register_concmd("amx_cw_ready_list", "command_ready_list", 0'
+require_string "$CORE" 'register_concmd("amx_cw_readylist", "command_ready_list", 0'
+require_string "$CORE" 'stock show_ready_list_menu(id)'
+require_string "$CORE" 'return ITEM_DISABLED'
+require_string "$CORE" 'AddMenuItem(g_DisplayName, "amx_cw_menu", ADMIN_CFG, PLUGIN_NAME)'
+require_string "$CORE" 'stock show_match_length_menu(id)'
+require_string "$CORE" 'stock show_min_ready_menu(id)'
+require_string "$CORE" 'set_pcvar_num(g_CvarMinReady, clamp(str_to_num(info), 1, 32))'
+
+# Once a map change owns either the cross-map series envelope or the persistent
+# PUG marker, no admin command or stale menu may cancel its scheduled task.
+# plugin_end must preserve that owner for the next plugin instance.
+require_string "$CORE" 'stock bool:map_transition_blocks_mutation(id, bool:chatFeedback)'
+require_string "$CORE" 'if (!g_MapChangePending) return false'
+require_string "$CORE" 'CW_ERR_MAP_CHANGE_PENDING'
+require_string "$CORE" 'if (g_MapChangePending && !equal(info, "status") && !equal(info, "ready_list"))'
+require_string "$CORE" 'menu_destroy(menu); cw_chat_ml(id, "CW_ERR_MAP_CHANGE_PENDING"); show_control_menu(id)'
+require_string "$CORE" 'if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED'
+require_string "$CORE" 'if (map_transition_blocks_mutation(id, true)) return PLUGIN_HANDLED'
+
+plugin_end_block="$(awk '/public plugin_end\(\)/,/public client_putinserver\(id\)/' "$CORE")"
+grep -Fq 'if (!g_MapChangePending)' <<<"$plugin_end_block"
+grep -Fq 'clear_pug_resume_state()' <<<"$plugin_end_block"
+grep -Fq 'discard_series_manifest()' <<<"$plugin_end_block"
+
+control_menu_block="$(awk '/stock show_control_menu\(id\)/,/stock bool:control_swap_allowed\(\)/' "$CORE")"
+pending_menu_line="$(grep -n 'if (g_MapChangePending)' <<<"$control_menu_block" | cut -d: -f1 | head -1)"
+restart_menu_line="$(grep -n 'CW_MENU_RESTART_MATCH' <<<"$control_menu_block" | cut -d: -f1 | head -1)"
+test -n "$pending_menu_line" && test -n "$restart_menu_line" && test "$pending_menu_line" -lt "$restart_menu_line"
+
+for function_range in \
+	'stock bool:start_warmup(bool:resetData)|stock start_knife_round()' \
+	'stock start_knife_round()|stock bool:start_live_match(bool:preserveSides)' \
+	'stock bool:start_live_match(bool:preserveSides)|stock begin_lo3(bool:resetRoundTracking' \
+	'stock begin_lo3(bool:resetRoundTracking|stock close_active_lifecycle' \
+	'stock stop_match(bool:administrator)|stock restart_current_half()' \
+	'stock restart_current_half()|stock bool:restart_whole_match' \
+	'stock bool:restart_whole_match|stock set_player_ready'; do
+	start="${function_range%%|*}"
+	end="${function_range#*|}"
+	block="$(awk -v start="$start" -v end="$end" 'index($0, start) { active=1 } active { print } active && index($0, end) && !index($0, start) { exit }' "$CORE")"
+	grep -Fq 'map_transition_blocks_mutation' <<<"$block" || {
+		printf 'Missing pending-map mutation guard in function range: %s\n' "$function_range" >&2
+		exit 1
+	}
+done
+
+cancel_block="$(awk '/stock cancel_transition_tasks\(\)/,/stock cancel_lo3_tasks\(\)/' "$CORE")"
+grep -Fq 'remove_task(TASK_MAP_CHANGE)' <<<"$cancel_block"
+grep -Fq 'remove_task(TASK_PUG_MAP_CHANGE)' <<<"$cancel_block"
+if grep -Fq 'g_MapChangePending' <<<"$cancel_block"; then
+	printf 'Generic task cancellation unexpectedly claims or clears the durable map-change owner.\n' >&2
+	exit 1
+fi
+
+crossmap_block="$(awk '/stock begin_map_transition\(\)/,/stock finish_match\(bool:stopped/' "$CORE")"
+crossmap_owner_line="$(grep -n 'persist_crossmap_state()' <<<"$crossmap_block" | cut -d: -f1 | head -1)"
+crossmap_pending_line="$(grep -n 'g_MapChangePending = true' <<<"$crossmap_block" | cut -d: -f1 | head -1)"
+crossmap_task_line="$(grep -n 'TASK_MAP_CHANGE' <<<"$crossmap_block" | cut -d: -f1 | head -1)"
+test "$crossmap_owner_line" -lt "$crossmap_pending_line" && test "$crossmap_pending_line" -lt "$crossmap_task_line"
+
+pug_transition_block="$(awk '/stock bool:schedule_persistent_pug_advance\(/,/public task_change_pug_map\(\)/' "$CORE")"
+pug_owner_line="$(grep -n 'set_localinfo(LI_PUG_RESUME, "1")' <<<"$pug_transition_block" | cut -d: -f1 | head -1)"
+pug_pending_line="$(grep -n 'g_MapChangePending = true' <<<"$pug_transition_block" | cut -d: -f1 | head -1)"
+pug_task_line="$(grep -n 'TASK_PUG_MAP_CHANGE' <<<"$pug_transition_block" | tail -1 | cut -d: -f1)"
+test "$pug_owner_line" -lt "$pug_pending_line" && test "$pug_pending_line" -lt "$pug_task_line"
+
+attempt_pending_mutation() {
+	# A rejected control must preserve all durable and scheduled ownership.
+	test "$map_change_pending" -eq 1 && return
+	map_task_queued=0
+	crossmap_owner=0
+	pug_owner=0
+}
+plugin_end_model() {
+	if test "$map_change_pending" -ne 1; then
+		crossmap_owner=0
+		pug_owner=0
+	fi
+}
+for owner_type in crossmap pug; do
+	map_change_pending=1
+	map_task_queued=1
+	crossmap_owner=0
+	pug_owner=0
+	if test "$owner_type" = crossmap; then crossmap_owner=1; else pug_owner=1; fi
+	attempt_pending_mutation
+	plugin_end_model
+	test "$map_change_pending|$map_task_queued" = '1|1'
+	if test "$owner_type" = crossmap; then test "$crossmap_owner|$pug_owner" = '1|0'; else test "$crossmap_owner|$pug_owner" = '0|1'; fi
+done
+
 # Model the SQL callback contract deterministically. A transient failure does
 # not advance the acknowledged session baseline; retries and overlapping
 # callbacks use absolute maxima, so either callback order is idempotent.

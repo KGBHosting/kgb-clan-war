@@ -27,7 +27,7 @@ for source in "$CORE" "$HLTV" "$SQL"; do
 		printf 'Missing required source: %s\n' "${source#"$ROOT_DIR/"}" >&2
 		exit 1
 	}
-	require_string "$source" '#define PLUGIN_VERSION "0.3.0"'
+	require_string "$source" '#define PLUGIN_VERSION "0.4.0"'
 	require_string "$source" 'SPDX-License-Identifier: GPL-3.0-or-later'
 	if awk 'length($0) > 511 { found=1 } END { exit found ? 0 : 1 }' "$source"; then
 		printf 'A source line exceeds the AMX Mod X 1.8.2 compiler limit: %s\n' "${source#"$ROOT_DIR/"}" >&2
@@ -37,7 +37,7 @@ done
 
 for command in \
 	amx_cw_menu amx_cw_warmup amx_cw_knife amx_cw_live amx_cw_relo3 \
-	amx_cw_swap amx_cw_restart_half amx_cw_restart_match amx_cw_pug_randomize \
+	amx_cw_swap amx_cw_restart_half amx_cw_restart_match amx_cw_ready_list amx_cw_readylist amx_cw_pug_randomize \
 	amx_cw_pug_start amx_cw_pug_assign amx_cw_pug_stop amx_cw_config_menu \
 	amx_cw_setup amx_cw_settings amx_match amx_match2 amx_match3 amx_match4 \
 	amx_matchrestart amx_matchstop amx_matchstart amx_matchrelo3 amx_swapteams amx_randomizeteams \
@@ -78,6 +78,23 @@ require_string "$CORE" 'valid_display_token(value, MAX_CHAT_PREFIX)'
 require_string "$CORE" 'copy(g_DisplayName, charsmax(g_DisplayName), DEFAULT_DISPLAY_NAME)'
 require_string "$CORE" 'copy(g_ChatPrefix, charsmax(g_ChatPrefix), DEFAULT_CHAT_PREFIX)'
 require_string "$CORE" 'new menu = menu_create(g_DisplayName, "menu_control_handler")'
+require_string "$CORE" 'AddMenuItem(g_DisplayName, "amx_cw_menu", ADMIN_CFG, PLUGIN_NAME)'
+require_string "$CORE" 'register_concmd("amx_matchrelo3", "command_legacy_relo3", ADMIN_CFG'
+require_string "$CORE" 'register_concmd("amx_cw_relo3", "command_relo3", ADMIN_CFG'
+require_string "$CORE" 'stock bool:start_live_match(bool:preserveSides)'
+require_string "$CORE" 'stock bool:restart_whole_match(id, bool:chatFeedback)'
+require_string "$CORE" 'if (!start_live_match(false))'
+require_string "$CORE" 'cw_console_ml(id, "CW_ERR_RESTART_FAILED")'
+require_string "$CORE" 'audit_event("admin_restart_match")'
+require_string "$CORE" 'if (g_State == STATE_OFF)'
+require_string "$CORE" 'stock show_restart_match_confirmation(id)'
+require_string "$CORE" 'stock show_stop_confirmation(id)'
+require_string "$CORE" 'stock show_ready_list_menu(id)'
+require_string "$CORE" 'stock show_match_length_menu(id)'
+require_string "$CORE" 'stock show_min_ready_menu(id)'
+require_string "$CORE" 'stock bool:map_transition_blocks_mutation(id, bool:chatFeedback)'
+require_string "$CORE" 'cw_chat_ml(id, "CW_ERR_MAP_CHANGE_PENDING")'
+require_string "$CORE" 'if (g_MapChangePending)'
 require_string "$CORE" 'formatex(title, charsmax(title), "%s: %L", g_DisplayName, id, "CW_KNIFE_TITLE")'
 require_string "$CORE" 'new menu = menu_create(title, "menu_knife_vote_handler")'
 require_string "$CORE" 'register_dictionary("kgb_clan_war.txt")'
@@ -134,7 +151,7 @@ require_string "$CORE_CONFIG" 'kgb_cw_playout_vote_default 1'
 require_string "$CORE_CONFIG" 'kgb_cw_time_limit_finish_round 1'
 require_string "$CORE_CONFIG" 'kgb_cw_screenshot_on_stop 0'
 require_string "$CORE_CONFIG" 'kgb_cw_file_stats 0'
-require_string "$README" '`v0.3.0` is the next qualification candidate.'
+require_string "$README" '`v0.4.0` is an immutable prerelease.'
 require_string "$README" 'KGB Hosting may install, run, modify, and redistribute it'
 require_string "$README" 'does not grant trademark rights'
 

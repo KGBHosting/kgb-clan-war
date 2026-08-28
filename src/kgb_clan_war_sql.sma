@@ -5,7 +5,7 @@
 #include <sqlx>
 
 #define PLUGIN_NAME "KGB Clan War: SQL"
-#define PLUGIN_VERSION "0.3.0"
+#define PLUGIN_VERSION "0.4.0"
 #define PLUGIN_AUTHOR "KGB Hosting"
 
 #define EVENT_QUEUE_MAX 16

@@ -8,7 +8,7 @@
 #include <fun>
 
 #define PLUGIN_NAME "KGB Clan War"
-#define PLUGIN_VERSION "0.3.0"
+#define PLUGIN_VERSION "0.4.0"
 #define PLUGIN_AUTHOR "KGB Hosting"
 
 #define DEFAULT_DISPLAY_NAME "KGB Clan War"
@@ -118,6 +118,11 @@ new g_KnifeVoteChoice[MAX_PLAYERS + 1]
 new bool:g_MapMenuSecond[MAX_PLAYERS + 1]
 new g_MapMenuFirst[MAX_PLAYERS + 1][MAX_MAP_TOKEN + 1]
 new g_MapcycleMaps[MAX_MAPCYCLE_MAPS][MAX_MAP_TOKEN + 1]
+
+new const g_MrLengthChoices[] = {3, 6, 9, 12, 15}
+new const g_WlLengthChoices[] = {4, 8, 10, 13, 16}
+new const g_TlLengthChoices[] = {5, 10, 15, 20, 30, 45}
+new const g_MinReadyChoices[] = {1, 2, 4, 6, 8, 10, 12, 16, 24, 32}
 
 new g_MapNumber = 1, g_MapCount = 1
 new g_Map1[MAX_MAP_TOKEN + 1], g_Map2[MAX_MAP_TOKEN + 1]
@@ -261,6 +266,8 @@ public plugin_init()
     register_concmd("amx_cw_swap", "command_swap", ADMIN_CFG, "- swap T and CT")
     register_concmd("amx_cw_restart_half", "command_restart_half", ADMIN_CFG, "- reset the current half")
     register_concmd("amx_cw_restart_match", "command_restart_match", ADMIN_CFG, "- reset the whole match")
+    register_concmd("amx_cw_ready_list", "command_ready_list", 0, "- show the current ready list")
+    register_concmd("amx_cw_readylist", "command_ready_list", 0, "- compatibility alias")
     register_concmd("amx_cw_pug_randomize", "command_pug_randomize", ADMIN_CFG, "- randomly balance warmup players")
     register_concmd("amx_cw_pug_start", "command_pug_start", ADMIN_CFG, "[random|manual]")
     register_concmd("amx_cw_pug_assign", "command_pug_assign", ADMIN_CFG, "<player> <a|b>")
@@ -290,7 +297,7 @@ public plugin_init()
     register_concmd("amx_matchrestart", "command_restart_match", ADMIN_CFG, "- compatibility alias")
     register_concmd("amx_matchstop", "command_stop", ADMIN_CFG, "- compatibility alias")
     register_concmd("amx_matchstart", "command_live", ADMIN_CFG, "- compatibility alias")
-    register_concmd("amx_matchrelo3", "command_relo3", ADMIN_CFG, "- compatibility alias")
+    register_concmd("amx_matchrelo3", "command_legacy_relo3", ADMIN_CFG, "- reset the current half with LO3")
     register_concmd("amx_swapteams", "command_swap", ADMIN_CFG, "- compatibility alias")
     register_concmd("amx_randomizeteams", "command_pug_randomize", ADMIN_CFG, "- compatibility alias")
     register_concmd("amx_cw_status", "command_status", 0, "- show detailed status")
@@ -318,6 +325,7 @@ public plugin_cfg()
     server_cmd("exec addons/amxmodx/configs/kgb_clan_war.cfg")
     server_exec()
     refresh_branding(true)
+    AddMenuItem(g_DisplayName, "amx_cw_menu", ADMIN_CFG, PLUGIN_NAME)
     set_cw_state(STATE_OFF)
     set_task(1.0, "task_resume_crossmap", TASK_RESUME_MAP)
     schedule_status_hud()
@@ -395,13 +403,13 @@ public command_menu(id, level, cid)
 
 public command_warmup(id, level, cid)
 {
-    if (cmd_access(id, level, cid, 1) && mode_enabled(id)) start_warmup(true)
+    if (cmd_access(id, level, cid, 1) && mode_enabled(id) && !map_transition_blocks_mutation(id, false)) start_warmup(true)
     return PLUGIN_HANDLED
 }
 
 public command_knife(id, level, cid)
 {
-    if (cmd_access(id, level, cid, 1) && mode_enabled(id)) start_knife_round()
+    if (cmd_access(id, level, cid, 1) && mode_enabled(id) && !map_transition_blocks_mutation(id, false)) start_knife_round()
     return PLUGIN_HANDLED
 }
 
@@ -409,6 +417,7 @@ public command_live(id, level, cid)
 {
     if (cmd_access(id, level, cid, 1) && mode_enabled(id))
     {
+        if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
         if (g_State == STATE_HALF_READY) resume_ready_half()
         else start_live_match(g_State == STATE_WARMUP && g_KnifeDecisionMade)
     }
@@ -418,14 +427,25 @@ public command_live(id, level, cid)
 public command_relo3(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     if (g_State != STATE_LIVE) cw_console_ml(id, "CW_ERR_NOT_LIVE")
     else begin_lo3(false)
+    return PLUGIN_HANDLED
+}
+
+public command_legacy_relo3(id, level, cid)
+{
+    if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
+    if (g_State != STATE_LIVE) cw_console_ml(id, "CW_ERR_NOT_LIVE")
+    else restart_current_half()
     return PLUGIN_HANDLED
 }
 
 public command_swap(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     if (g_Lo3Running || g_State == STATE_HALFTIME || g_State == STATE_HALF_READY || g_State == STATE_OVERTIME_VOTE || g_State == STATE_PLAYOUT_VOTE) cw_console_ml(id, "CW_ERR_TRANSITION")
     else
     {
@@ -440,6 +460,7 @@ public command_swap(id, level, cid)
 public command_restart_half(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     if (g_State != STATE_LIVE) cw_console_ml(id, "CW_ERR_NOT_LIVE")
     else restart_current_half()
     return PLUGIN_HANDLED
@@ -449,15 +470,28 @@ public command_restart_match(id, level, cid)
 {
     if (cmd_access(id, level, cid, 1) && mode_enabled(id))
     {
-        start_live_match(false)
-        audit_event("admin_restart_match")
+        if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
+        restart_whole_match(id, false)
     }
+    return PLUGIN_HANDLED
+}
+
+public command_ready_list(id, level, cid)
+{
+    if (id <= 0 || !is_user_connected(id))
+    {
+        cw_console_ml(id, "CW_ERR_READY_LIST_PLAYER")
+        return PLUGIN_HANDLED
+    }
+    if (!get_pcvar_num(g_CvarEnabled)) cw_console_ml(id, "CW_ERR_DISABLED")
+    else show_ready_list_menu(id)
     return PLUGIN_HANDLED
 }
 
 public command_pug_randomize(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     if (!get_pcvar_num(g_CvarPugMode)) cw_console_ml(id, "CW_ERR_PUG_DISABLED")
     else if (g_State != STATE_OFF && g_State != STATE_WARMUP) cw_console_ml(id, "CW_ERR_PUG_STATE")
     else randomize_pug_teams()
@@ -467,6 +501,7 @@ public command_pug_randomize(id, level, cid)
 public command_pug_start(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 1) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     if (!get_pcvar_num(g_CvarPugMode))
     {
         cw_console_ml(id, "CW_ERR_PUG_DISABLED")
@@ -500,6 +535,7 @@ public command_pug_start(id, level, cid)
 public command_pug_assign(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 3) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     if (!get_pcvar_num(g_CvarPugMode) || !g_PugActive || g_State != STATE_WARMUP)
     {
         cw_console_ml(id, "CW_ERR_PUG_ASSIGN_STATE")
@@ -534,6 +570,7 @@ public command_pug_stop(id, level, cid)
         cw_console_ml(id, "CW_ERR_RECOVERY_PENDING")
         return PLUGIN_HANDLED
     }
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     if (!g_PugActive) cw_console_ml(id, "CW_ERR_NO_PUG")
     else
     {
@@ -670,6 +707,7 @@ public command_stop(id, level, cid)
         cw_console_ml(id, "CW_ERR_RECOVERY_PENDING")
         return PLUGIN_HANDLED
     }
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     stop_match(true)
     return PLUGIN_HANDLED
 }
@@ -734,6 +772,7 @@ public command_scoreids_snapshot(id, level, cid)
 public command_legacy_match(id, level, cid)
 {
     if (!cmd_access(id, level, cid, 3) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false)) return PLUGIN_HANDLED
     if (!safe_configuration_state(id)) return PLUGIN_HANDLED
     if (read_argc() >= 5)
     {
@@ -809,7 +848,8 @@ public command_legacy_match(id, level, cid)
 
 public command_legacy_match2(id, level, cid)
 {
-    if (!cmd_access(id, level, cid, 3) || !mode_enabled(id) || !safe_configuration_state(id)) return PLUGIN_HANDLED
+    if (!cmd_access(id, level, cid, 3) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false) || !safe_configuration_state(id)) return PLUGIN_HANDLED
     new teamA[MAX_TEAM_NAME + 1], teamB[MAX_TEAM_NAME + 1], rule[16], config[MAX_CONFIG_TOKEN + 1], recordMode[16]
     get_pcvar_string(g_CvarTeamAName, teamA, charsmax(teamA)); get_pcvar_string(g_CvarTeamBName, teamB, charsmax(teamB))
     read_argv(1, rule, charsmax(rule)); read_argv(2, config, charsmax(config)); read_argv(3, recordMode, charsmax(recordMode))
@@ -819,7 +859,8 @@ public command_legacy_match2(id, level, cid)
 
 public command_legacy_match3(id, level, cid)
 {
-    if (!cmd_access(id, level, cid, 6) || !mode_enabled(id) || !safe_configuration_state(id)) return PLUGIN_HANDLED
+    if (!cmd_access(id, level, cid, 6) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false) || !safe_configuration_state(id)) return PLUGIN_HANDLED
     new teamA[MAX_TEAM_NAME + 1], teamB[MAX_TEAM_NAME + 1], rule[16], config[MAX_CONFIG_TOKEN + 1], map2[MAX_MAP_TOKEN + 1], recordMode[16]
     read_argv(1, teamA, charsmax(teamA)); read_argv(2, teamB, charsmax(teamB)); read_argv(3, rule, charsmax(rule))
     read_argv(4, config, charsmax(config)); read_argv(5, map2, charsmax(map2)); read_argv(6, recordMode, charsmax(recordMode))
@@ -829,7 +870,8 @@ public command_legacy_match3(id, level, cid)
 
 public command_legacy_match4(id, level, cid)
 {
-    if (!cmd_access(id, level, cid, 4) || !mode_enabled(id) || !safe_configuration_state(id)) return PLUGIN_HANDLED
+    if (!cmd_access(id, level, cid, 4) || !mode_enabled(id)) return PLUGIN_HANDLED
+    if (map_transition_blocks_mutation(id, false) || !safe_configuration_state(id)) return PLUGIN_HANDLED
     new teamA[MAX_TEAM_NAME + 1], teamB[MAX_TEAM_NAME + 1], rule[16], config[MAX_CONFIG_TOKEN + 1], map2[MAX_MAP_TOKEN + 1], recordMode[16]
     get_pcvar_string(g_CvarTeamAName, teamA, charsmax(teamA)); get_pcvar_string(g_CvarTeamBName, teamB, charsmax(teamB))
     read_argv(1, rule, charsmax(rule)); read_argv(2, config, charsmax(config)); read_argv(3, map2, charsmax(map2)); read_argv(4, recordMode, charsmax(recordMode))
@@ -1031,6 +1073,18 @@ stock sanitize_html(const input[], output[], length)
     output[position] = 0
 }
 
+stock sanitize_menu_text(const input[], output[], length)
+{
+    new position
+    for (new i = 0; input[i] && position < length; i++)
+    {
+        new c = input[i]
+        if (c < 32 || c > 126 || c == 92 || c == '%' || c == 94) c = '_'
+        output[position++] = c
+    }
+    output[position] = 0
+}
+
 public command_shield_purchase(id)
 {
     if (!g_ShieldRestricted) return PLUGIN_CONTINUE
@@ -1047,16 +1101,19 @@ public command_say(id)
     if (equali(text, "notready") || equali(text, "/notready") || equali(text, "!notready")) { set_player_ready(id, false); return PLUGIN_HANDLED; }
     if (equali(text, "teamready") || equali(text, "/teamready") || equali(text, "!teamready")) { set_team_ready(id, true); return PLUGIN_HANDLED; }
     if (equali(text, "teamnotready") || equali(text, "/teamnotready") || equali(text, "!teamnotready")) { set_team_ready(id, false); return PLUGIN_HANDLED; }
+    if (equali(text, "/readylist") || equali(text, "!readylist")) { show_ready_list_menu(id); return PLUGIN_HANDLED; }
     if (equali(text, "/score") || equali(text, "!score")) { print_score(id, false); return PLUGIN_HANDLED; }
     if ((equali(text, "/relo3") || equali(text, "!relo3")) && (get_user_flags(id) & ADMIN_CFG))
     {
         if (!mode_enabled(id)) return PLUGIN_HANDLED
-        if (g_State == STATE_LIVE) begin_lo3(false)
+        if (map_transition_blocks_mutation(id, true)) return PLUGIN_HANDLED
+        if (g_State == STATE_LIVE) restart_current_half()
         else cw_chat_ml(id, "CW_ERR_NOT_LIVE")
         return PLUGIN_HANDLED
     }
     if ((equali(text, "/stop") || equali(text, "!stop")) && (get_user_flags(id) & ADMIN_CFG))
     {
+        if (map_transition_blocks_mutation(id, true)) return PLUGIN_HANDLED
         if (crossmap_recovery_pending())
         {
             cw_console_ml(id, "CW_ERR_RECOVERY_PENDING")
@@ -1069,8 +1126,8 @@ public command_say(id)
     {
         if (mode_enabled(id))
         {
-            start_live_match(false)
-            audit_event("admin_restart_match")
+            if (map_transition_blocks_mutation(id, true)) return PLUGIN_HANDLED
+            restart_whole_match(id, true)
         }
         return PLUGIN_HANDLED
     }
@@ -1087,6 +1144,7 @@ public command_say(id)
     {
         if (mode_enabled(id))
         {
+            if (map_transition_blocks_mutation(id, true)) return PLUGIN_HANDLED
             if (g_State == STATE_HALF_READY) resume_ready_half()
             else start_live_match(g_State == STATE_WARMUP && g_KnifeDecisionMade)
         }
@@ -1102,22 +1160,84 @@ public menu_control_handler(id, menu, item)
         menu_destroy(menu)
         return PLUGIN_HANDLED
     }
+    new access, info[24], label[64], callback
+    menu_item_getinfo(menu, item, access, info, charsmax(info), label, charsmax(label), callback)
+    menu_destroy(menu)
+
+    if (g_MapChangePending && !equal(info, "status") && !equal(info, "ready_list"))
+    {
+        cw_chat_ml(id, "CW_ERR_MAP_CHANGE_PENDING")
+        return PLUGIN_HANDLED
+    }
+
+    if (equal(info, "warmup") && (g_State == STATE_OFF || g_State == STATE_WARMUP || g_State == STATE_KNIFE || g_State == STATE_KNIFE_VOTE)) start_warmup(true)
+    else if (equal(info, "knife") && (g_State == STATE_OFF || g_State == STATE_WARMUP)) start_knife_round()
+    else if (equal(info, "live") && (g_State == STATE_OFF || g_State == STATE_WARMUP || g_State == STATE_KNIFE || g_State == STATE_KNIFE_VOTE)) start_live_match(g_State == STATE_WARMUP && g_KnifeDecisionMade)
+    else if (equal(info, "resume") && g_State == STATE_HALF_READY) resume_ready_half()
+    else if (equal(info, "relo3") && g_State == STATE_LIVE && !g_Lo3Running) begin_lo3(false)
+    else if (equal(info, "restart_half") && g_State == STATE_LIVE) restart_current_half()
+    else if (equal(info, "restart_match") && g_State != STATE_OFF) show_restart_match_confirmation(id)
+    else if (equal(info, "status")) print_score(id, true)
+    else if (equal(info, "ready_list")) show_ready_list_menu(id)
+    else if (equal(info, "swap") && control_swap_allowed())
+    {
+        swap_players(); toggle_team_a_side(); announce_ml("CW_TEAMS_SWAPPED"); audit_event("menu_swap")
+    }
+    else if (equal(info, "pug") && get_pcvar_num(g_CvarPugMode) && (g_State == STATE_OFF || g_State == STATE_WARMUP)) randomize_pug_teams()
+    else if (equal(info, "config") && (g_State == STATE_OFF || g_State == STATE_WARMUP)) show_config_menu(id)
+    else if (equal(info, "stop") && g_State != STATE_OFF) show_stop_confirmation(id)
+    return PLUGIN_HANDLED
+}
+
+public menu_restart_confirm_handler(id, menu, item)
+{
+    if (item == MENU_EXIT || !(get_user_flags(id) & ADMIN_CFG) || !get_pcvar_num(g_CvarEnabled) || crossmap_recovery_pending())
+    {
+        menu_destroy(menu)
+        return PLUGIN_HANDLED
+    }
+    if (g_MapChangePending)
+    {
+        menu_destroy(menu); cw_chat_ml(id, "CW_ERR_MAP_CHANGE_PENDING"); show_control_menu(id)
+        return PLUGIN_HANDLED
+    }
     new access, info[8], label[64], callback
     menu_item_getinfo(menu, item, access, info, charsmax(info), label, charsmax(label), callback)
-    switch (str_to_num(info))
+    menu_destroy(menu)
+    if (equal(info, "yes")) restart_whole_match(id, true)
+    else show_control_menu(id)
+    return PLUGIN_HANDLED
+}
+
+public menu_stop_confirmation_handler(id, menu, item)
+{
+    if (item == MENU_EXIT || !(get_user_flags(id) & ADMIN_CFG) || !get_pcvar_num(g_CvarEnabled) || crossmap_recovery_pending())
     {
-        case 1: start_warmup(true)
-        case 2: start_knife_round()
-        case 3: if (g_State == STATE_HALF_READY) resume_ready_half(); else start_live_match(g_State == STATE_WARMUP && g_KnifeDecisionMade)
-        case 4: if (g_State == STATE_LIVE) begin_lo3(false)
-        case 5: print_score(id, true)
-        case 6: if (!g_Lo3Running && g_State != STATE_HALFTIME && g_State != STATE_HALF_READY && g_State != STATE_OVERTIME_VOTE && g_State != STATE_PLAYOUT_VOTE) { swap_players(); toggle_team_a_side(); announce_ml("CW_TEAMS_SWAPPED"); audit_event("menu_swap"); }
-        case 7: if (get_pcvar_num(g_CvarPugMode) && (g_State == STATE_OFF || g_State == STATE_WARMUP)) randomize_pug_teams()
-        case 8: show_config_menu(id)
-        case 9: stop_match(true)
+        menu_destroy(menu)
+        return PLUGIN_HANDLED
     }
+    if (g_MapChangePending)
+    {
+        menu_destroy(menu); cw_chat_ml(id, "CW_ERR_MAP_CHANGE_PENDING"); show_control_menu(id)
+        return PLUGIN_HANDLED
+    }
+    new access, info[8], label[64], callback
+    menu_item_getinfo(menu, item, access, info, charsmax(info), label, charsmax(label), callback)
+    menu_destroy(menu)
+    if (equal(info, "yes") && g_State != STATE_OFF) stop_match(true)
+    else show_control_menu(id)
+    return PLUGIN_HANDLED
+}
+
+public menu_ready_list_handler(id, menu, item)
+{
     menu_destroy(menu)
     return PLUGIN_HANDLED
+}
+
+public menu_ready_list_item_callback(id, menu, item)
+{
+    return ITEM_DISABLED
 }
 
 public menu_config_handler(id, menu, item)
@@ -1153,27 +1273,71 @@ public menu_settings_handler(id, menu, item)
     switch (str_to_num(info))
     {
         case 1: cycle_format_setting()
-        case 2: cycle_ready_setting()
-        case 3: cycle_swap_setting()
-        case 4: set_pcvar_num(g_CvarSecondHalfReady, !get_pcvar_num(g_CvarSecondHalfReady))
-        case 5: set_pcvar_num(g_CvarPlayout, (get_pcvar_num(g_CvarPlayout) + 1) % 3)
-        case 6: set_pcvar_num(g_CvarOvertime, !get_pcvar_num(g_CvarOvertime))
-        case 7: set_pcvar_num(g_CvarOvertimeVote, !get_pcvar_num(g_CvarOvertimeVote))
-        case 8: cycle_pug_style_setting()
-        case 9: set_pcvar_num(g_CvarPugPersist, !get_pcvar_num(g_CvarPugPersist))
-        case 10: set_pcvar_num(g_CvarScreenshots, !get_pcvar_num(g_CvarScreenshots))
-        case 11: set_pcvar_num(g_CvarScoreIdScreenshots, !get_pcvar_num(g_CvarScoreIdScreenshots))
-        case 12: set_pcvar_num(g_CvarScreenshotOnStop, !get_pcvar_num(g_CvarScreenshotOnStop))
-        case 13: set_pcvar_num(g_CvarTimeLimitFinishRound, !get_pcvar_num(g_CvarTimeLimitFinishRound))
-        case 14: set_pcvar_num(g_CvarPlayoutVoteDefault, !get_pcvar_num(g_CvarPlayoutVoteDefault))
-        case 15: cycle_hud_interval_setting()
-        case 16: { menu_destroy(menu); client_cmd(id, "messagemode amx_cw_teams"); return PLUGIN_HANDLED; }
-        case 17: { menu_destroy(menu); client_cmd(id, "messagemode amx_cw_tags"); return PLUGIN_HANDLED; }
-        case 18: { menu_destroy(menu); show_preset_menu(id); return PLUGIN_HANDLED; }
-        case 19: { menu_destroy(menu); g_MapMenuSecond[id] = false; g_MapMenuFirst[id][0] = 0; show_map_menu(id); return PLUGIN_HANDLED; }
-        case 20: { menu_destroy(menu); save_menu_config(id); return PLUGIN_HANDLED; }
+        case 2: { menu_destroy(menu); load_runtime_settings(false); show_match_length_menu(id); return PLUGIN_HANDLED; }
+        case 3: cycle_ready_setting()
+        case 4: { menu_destroy(menu); load_runtime_settings(false); show_min_ready_menu(id); return PLUGIN_HANDLED; }
+        case 5: cycle_swap_setting()
+        case 6: set_pcvar_num(g_CvarSecondHalfReady, !get_pcvar_num(g_CvarSecondHalfReady))
+        case 7: set_pcvar_num(g_CvarPlayout, (get_pcvar_num(g_CvarPlayout) + 1) % 3)
+        case 8: set_pcvar_num(g_CvarOvertime, !get_pcvar_num(g_CvarOvertime))
+        case 9: set_pcvar_num(g_CvarOvertimeVote, !get_pcvar_num(g_CvarOvertimeVote))
+        case 10: cycle_pug_style_setting()
+        case 11: set_pcvar_num(g_CvarPugPersist, !get_pcvar_num(g_CvarPugPersist))
+        case 12: set_pcvar_num(g_CvarScreenshots, !get_pcvar_num(g_CvarScreenshots))
+        case 13: set_pcvar_num(g_CvarScoreIdScreenshots, !get_pcvar_num(g_CvarScoreIdScreenshots))
+        case 14: set_pcvar_num(g_CvarScreenshotOnStop, !get_pcvar_num(g_CvarScreenshotOnStop))
+        case 15: set_pcvar_num(g_CvarTimeLimitFinishRound, !get_pcvar_num(g_CvarTimeLimitFinishRound))
+        case 16: set_pcvar_num(g_CvarPlayoutVoteDefault, !get_pcvar_num(g_CvarPlayoutVoteDefault))
+        case 17: cycle_hud_interval_setting()
+        case 18: { menu_destroy(menu); client_cmd(id, "messagemode amx_cw_teams"); return PLUGIN_HANDLED; }
+        case 19: { menu_destroy(menu); client_cmd(id, "messagemode amx_cw_tags"); return PLUGIN_HANDLED; }
+        case 20: { menu_destroy(menu); show_preset_menu(id); return PLUGIN_HANDLED; }
+        case 21: { menu_destroy(menu); g_MapMenuSecond[id] = false; g_MapMenuFirst[id][0] = 0; show_map_menu(id); return PLUGIN_HANDLED; }
+        case 22: { menu_destroy(menu); save_menu_config(id); return PLUGIN_HANDLED; }
     }
     menu_destroy(menu)
+    load_runtime_settings(false)
+    show_settings_menu(id)
+    return PLUGIN_HANDLED
+}
+
+public menu_match_length_handler(id, menu, item)
+{
+    if (item == MENU_EXIT || !(get_user_flags(id) & ADMIN_CFG) || !safe_configuration_state(id))
+    {
+        menu_destroy(menu)
+        return PLUGIN_HANDLED
+    }
+    new access, info[8], label[64], callback
+    menu_item_getinfo(menu, item, access, info, charsmax(info), label, charsmax(label), callback)
+    menu_destroy(menu)
+    new format[8]
+    get_pcvar_string(g_CvarFormat, format, charsmax(format)); strtolower(format)
+    if (!equal(info, format, 2))
+    {
+        load_runtime_settings(false); show_settings_menu(id)
+        return PLUGIN_HANDLED
+    }
+    new value = str_to_num(info[2])
+    if (equal(format, "mr")) set_pcvar_num(g_CvarHalfRounds, clamp(value, 1, 100))
+    else if (equal(format, "wl")) set_pcvar_num(g_CvarWinRounds, clamp(value, 1, 100))
+    else set_pcvar_num(g_CvarTimeLimitMinutes, clamp(value, 1, 180))
+    load_runtime_settings(false)
+    show_settings_menu(id)
+    return PLUGIN_HANDLED
+}
+
+public menu_min_ready_handler(id, menu, item)
+{
+    if (item == MENU_EXIT || !(get_user_flags(id) & ADMIN_CFG) || !safe_configuration_state(id))
+    {
+        menu_destroy(menu)
+        return PLUGIN_HANDLED
+    }
+    new access, info[8], label[64], callback
+    menu_item_getinfo(menu, item, access, info, charsmax(info), label, charsmax(label), callback)
+    menu_destroy(menu)
+    set_pcvar_num(g_CvarMinReady, clamp(str_to_num(info), 1, 32))
     load_runtime_settings(false)
     show_settings_menu(id)
     return PLUGIN_HANDLED
@@ -1538,21 +1702,154 @@ stock bool:mode_enabled(id)
     return false
 }
 
+stock bool:map_transition_blocks_mutation(id, bool:chatFeedback)
+{
+    if (!g_MapChangePending) return false
+    if (chatFeedback && id > 0) cw_chat_ml(id, "CW_ERR_MAP_CHANGE_PENDING")
+    else cw_console_ml(id, "CW_ERR_MAP_CHANGE_PENDING")
+    return true
+}
+
 stock show_control_menu(id)
 {
     refresh_branding(false)
     new menu = menu_create(g_DisplayName, "menu_control_handler"), label[64]
-    ml_text(id, "CW_MENU_WARMUP", label, charsmax(label)); menu_additem(menu, label, "1")
-    ml_text(id, "CW_MENU_KNIFE", label, charsmax(label)); menu_additem(menu, label, "2")
-    ml_text(id, "CW_MENU_LIVE", label, charsmax(label)); menu_additem(menu, label, "3")
-    ml_text(id, "CW_MENU_RELO3", label, charsmax(label)); menu_additem(menu, label, "4")
-    ml_text(id, "CW_MENU_STATUS", label, charsmax(label)); menu_additem(menu, label, "5")
-    ml_text(id, "CW_MENU_SWAP", label, charsmax(label)); menu_additem(menu, label, "6")
-    ml_text(id, "CW_MENU_PUG", label, charsmax(label)); menu_additem(menu, label, "7")
-    ml_text(id, "CW_MENU_CONFIG", label, charsmax(label)); menu_additem(menu, label, "8")
-    ml_text(id, "CW_MENU_STOP", label, charsmax(label)); menu_additem(menu, label, "9")
+    if (g_MapChangePending)
+    {
+        ml_text(id, "CW_MENU_STATUS", label, charsmax(label)); menu_additem(menu, label, "status")
+        ml_text(id, "CW_MENU_READY_LIST", label, charsmax(label)); menu_additem(menu, label, "ready_list")
+        menu_setprop(menu, MPROP_EXIT, MEXIT_ALL); menu_display(id, menu)
+        return
+    }
+    if (g_State == STATE_OFF || g_State == STATE_WARMUP || g_State == STATE_KNIFE || g_State == STATE_KNIFE_VOTE)
+    {
+        ml_text(id, "CW_MENU_WARMUP", label, charsmax(label)); menu_additem(menu, label, "warmup")
+        if (g_State == STATE_OFF || g_State == STATE_WARMUP)
+        {
+            ml_text(id, "CW_MENU_KNIFE", label, charsmax(label)); menu_additem(menu, label, "knife")
+        }
+        ml_text(id, "CW_MENU_LIVE", label, charsmax(label)); menu_additem(menu, label, "live")
+    }
+    else if (g_State == STATE_HALF_READY)
+    {
+        ml_text(id, "CW_MENU_RESUME", label, charsmax(label)); menu_additem(menu, label, "resume")
+    }
+
+    if (g_State == STATE_LIVE)
+    {
+        if (!g_Lo3Running)
+        {
+            ml_text(id, "CW_MENU_RELO3", label, charsmax(label)); menu_additem(menu, label, "relo3")
+        }
+        ml_text(id, "CW_MENU_RESTART_HALF", label, charsmax(label)); menu_additem(menu, label, "restart_half")
+    }
+    if (g_State != STATE_OFF)
+    {
+        ml_text(id, "CW_MENU_RESTART_MATCH", label, charsmax(label)); menu_additem(menu, label, "restart_match")
+    }
+    ml_text(id, "CW_MENU_STATUS", label, charsmax(label)); menu_additem(menu, label, "status")
+    ml_text(id, "CW_MENU_READY_LIST", label, charsmax(label)); menu_additem(menu, label, "ready_list")
+    if (control_swap_allowed())
+    {
+        ml_text(id, "CW_MENU_SWAP", label, charsmax(label)); menu_additem(menu, label, "swap")
+    }
+    if (get_pcvar_num(g_CvarPugMode) && (g_State == STATE_OFF || g_State == STATE_WARMUP))
+    {
+        ml_text(id, "CW_MENU_PUG", label, charsmax(label)); menu_additem(menu, label, "pug")
+    }
+    if (g_State == STATE_OFF || g_State == STATE_WARMUP)
+    {
+        ml_text(id, "CW_MENU_CONFIG", label, charsmax(label)); menu_additem(menu, label, "config")
+    }
+    if (g_State != STATE_OFF)
+    {
+        ml_text(id, "CW_MENU_STOP", label, charsmax(label)); menu_additem(menu, label, "stop")
+    }
     menu_setprop(menu, MPROP_EXIT, MEXIT_ALL)
     menu_display(id, menu)
+}
+
+stock bool:control_swap_allowed()
+{
+    if (g_Lo3Running) return false
+    return g_State == STATE_WARMUP || g_State == STATE_KNIFE || g_State == STATE_LIVE
+}
+
+stock show_restart_match_confirmation(id)
+{
+    if (g_State == STATE_OFF)
+    {
+        cw_chat_ml(id, "CW_ERR_RESTART_OFF")
+        return
+    }
+    new title[96], label[64]
+    formatex(title, charsmax(title), "%L", id, "CW_CONFIRM_RESTART_MATCH")
+    new menu = menu_create(title, "menu_restart_confirm_handler")
+    ml_text(id, "CW_CONFIRM_YES", label, charsmax(label)); menu_additem(menu, label, "yes")
+    ml_text(id, "CW_CONFIRM_NO", label, charsmax(label)); menu_additem(menu, label, "no")
+    menu_setprop(menu, MPROP_EXIT, MEXIT_ALL); menu_display(id, menu)
+}
+
+stock show_stop_confirmation(id)
+{
+    if (g_State == STATE_OFF) return
+    new title[96], label[64]
+    formatex(title, charsmax(title), "%L", id, "CW_CONFIRM_STOP")
+    new menu = menu_create(title, "menu_stop_confirmation_handler")
+    ml_text(id, "CW_CONFIRM_YES", label, charsmax(label)); menu_additem(menu, label, "yes")
+    ml_text(id, "CW_CONFIRM_NO", label, charsmax(label)); menu_additem(menu, label, "no")
+    menu_setprop(menu, MPROP_EXIT, MEXIT_ALL); menu_display(id, menu)
+}
+
+stock show_ready_list_menu(id)
+{
+    new title[96], label[96], players[32], count, callback
+    new ReadyMode:listMode = ready_list_mode()
+    get_players(players, count, "ch")
+    if (listMode == READY_TEAM)
+    {
+        new readyTeams
+        if (g_TeamReady[0]) readyTeams++
+        if (g_TeamReady[1]) readyTeams++
+        formatex(title, charsmax(title), "%L", id, "CW_READY_LIST_TEAM_TITLE", readyTeams)
+    }
+    else if (listMode == READY_ADMIN) formatex(title, charsmax(title), "%L", id, "CW_READY_LIST_ADMIN_TITLE")
+    else formatex(title, charsmax(title), "%L", id, "CW_READY_LIST_TITLE", ready_count(), required_ready_count())
+    new menu = menu_create(title, "menu_ready_list_handler")
+    callback = menu_makecallback("menu_ready_list_item_callback")
+    new active
+    for (new i = 0; i < count; i++)
+    {
+        new player = players[i], CsTeams:team = cs_get_user_team(player)
+        if (team != CS_TEAM_T && team != CS_TEAM_CT) continue
+        new name[32], safeName[32]
+        get_user_name(player, name, charsmax(name)); sanitize_menu_text(name, safeName, charsmax(safeName))
+        new bool:isReady = listMode == READY_TEAM ? g_TeamReady[identity_for_side(team)] : g_Ready[player]
+        if (listMode == READY_ADMIN)
+        {
+            formatex(label, charsmax(label), "%s [%L] - %L", safeName, id, team == CS_TEAM_CT ? "CW_SIDE_CT" : "CW_SIDE_T", id, "CW_READY_ADMIN_VALUE")
+        }
+        else
+        {
+            formatex(label, charsmax(label), "%s [%L] - %L", safeName, id, team == CS_TEAM_CT ? "CW_SIDE_CT" : "CW_SIDE_T", id, isReady ? "CW_READY_LIST_READY" : "CW_READY_LIST_NOT_READY")
+        }
+        menu_additem(menu, label, "", 0, callback); active++
+    }
+    if (!active)
+    {
+        ml_text(id, "CW_READY_LIST_EMPTY", label, charsmax(label)); menu_additem(menu, label, "", 0, callback)
+    }
+    menu_setprop(menu, MPROP_EXIT, MEXIT_ALL); menu_display(id, menu)
+}
+
+stock ReadyMode:ready_list_mode()
+{
+    if (g_State != STATE_OFF) return g_ReadyMode
+    new value[16]
+    get_pcvar_string(g_CvarReadyMode, value, charsmax(value)); strtolower(value)
+    if (equal(value, "team")) return READY_TEAM
+    if (equal(value, "admin")) return READY_ADMIN
+    return READY_PLAYER
 }
 
 stock show_config_menu(id)
@@ -1572,43 +1869,132 @@ stock show_config_menu(id)
 stock show_settings_menu(id)
 {
     new title[96], label[96], value[24]
+    load_runtime_settings(false)
     refresh_branding(false); formatex(title, charsmax(title), "%s: %L", g_DisplayName, id, "CW_SETTINGS_TITLE")
     new menu = menu_create(title, "menu_settings_handler")
     get_pcvar_string(g_CvarFormat, value, charsmax(value)); formatex(label, charsmax(label), "%L: %s", id, "CW_SETTING_FORMAT", value); menu_additem(menu, label, "1")
+    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_MATCH_LENGTH", id, g_Format == FORMAT_TL ? "CW_MINUTES_VALUE" : "CW_ROUNDS_VALUE", current_match_length()); menu_additem(menu, label, "2")
     get_pcvar_string(g_CvarReadyMode, value, charsmax(value)); strtolower(value)
     if (equal(value, "team")) ml_text(id, "CW_READY_TEAM", value, charsmax(value))
     else if (equal(value, "admin")) ml_text(id, "CW_READY_ADMIN_VALUE", value, charsmax(value))
     else ml_text(id, "CW_READY_PLAYER", value, charsmax(value))
-    formatex(label, charsmax(label), "%L: %s", id, "CW_SETTING_READY", value); menu_additem(menu, label, "2")
+    formatex(label, charsmax(label), "%L: %s", id, "CW_SETTING_READY", value); menu_additem(menu, label, "3")
+    formatex(label, charsmax(label), "%L: %d", id, "CW_SETTING_MIN_READY", get_pcvar_num(g_CvarMinReady)); menu_additem(menu, label, "4")
     get_pcvar_string(g_CvarSwapPolicy, value, charsmax(value)); strtolower(value)
     ml_text(id, equal(value, "off") ? "CW_SWAP_OFF" : "CW_SWAP_HALVES", value, charsmax(value))
-    formatex(label, charsmax(label), "%L: %s", id, "CW_SETTING_SWAP", value); menu_additem(menu, label, "3")
-    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_SECOND_READY", id, get_pcvar_num(g_CvarSecondHalfReady) ? "CW_ON" : "CW_OFF"); menu_additem(menu, label, "4")
+    formatex(label, charsmax(label), "%L: %s", id, "CW_SETTING_SWAP", value); menu_additem(menu, label, "5")
+    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_SECOND_READY", id, get_pcvar_num(g_CvarSecondHalfReady) ? "CW_ON" : "CW_OFF"); menu_additem(menu, label, "6")
     switch (get_pcvar_num(g_CvarPlayout))
     {
         case 1: ml_text(id, "CW_PLAYOUT_ALWAYS", value, charsmax(value))
         case 2: ml_text(id, "CW_PLAYOUT_VOTE_VALUE", value, charsmax(value))
         default: ml_text(id, "CW_PLAYOUT_CLINCH", value, charsmax(value))
     }
-    formatex(label, charsmax(label), "%L: %s", id, "CW_SETTING_PLAYOUT", value); menu_additem(menu, label, "5")
-    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_OVERTIME", id, get_pcvar_num(g_CvarOvertime) ? "CW_ON" : "CW_OFF"); menu_additem(menu, label, "6")
-    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_OT_VOTE", id, get_pcvar_num(g_CvarOvertimeVote) ? "CW_ON" : "CW_OFF"); menu_additem(menu, label, "7")
+    formatex(label, charsmax(label), "%L: %s", id, "CW_SETTING_PLAYOUT", value); menu_additem(menu, label, "7")
+    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_OVERTIME", id, get_pcvar_num(g_CvarOvertime) ? "CW_ON" : "CW_OFF"); menu_additem(menu, label, "8")
+    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_OT_VOTE", id, get_pcvar_num(g_CvarOvertimeVote) ? "CW_ON" : "CW_OFF"); menu_additem(menu, label, "9")
     get_pcvar_string(g_CvarPugStyle, value, charsmax(value)); strtolower(value)
     ml_text(id, equal(value, "manual") ? "CW_PUG_MANUAL" : "CW_PUG_RANDOM", value, charsmax(value))
-    formatex(label, charsmax(label), "%L: %s", id, "CW_SETTING_PUG_STYLE", value); menu_additem(menu, label, "8")
-    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_PUG_PERSIST", id, get_pcvar_num(g_CvarPugPersist) ? "CW_ON" : "CW_OFF"); menu_additem(menu, label, "9")
-    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_SCREENSHOTS", id, get_pcvar_num(g_CvarScreenshots) ? "CW_ON" : "CW_OFF"); menu_additem(menu, label, "10")
-    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_ID_SCREENSHOT", id, get_pcvar_num(g_CvarScoreIdScreenshots) ? "CW_ON" : "CW_OFF"); menu_additem(menu, label, "11")
-    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_STOP_SCREENSHOT", id, get_pcvar_num(g_CvarScreenshotOnStop) ? "CW_ON" : "CW_OFF"); menu_additem(menu, label, "12")
-    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_TL_FINISH_ROUND", id, get_pcvar_num(g_CvarTimeLimitFinishRound) ? "CW_ON" : "CW_OFF"); menu_additem(menu, label, "13")
-    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_PLAYOUT_DEFAULT", id, get_pcvar_num(g_CvarPlayoutVoteDefault) ? "CW_PLAYOUT_DEFAULT_CONTINUE" : "CW_PLAYOUT_DEFAULT_END"); menu_additem(menu, label, "14")
-    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_HUD_INTERVAL", id, "CW_SECONDS", get_pcvar_num(g_CvarHudInterval)); menu_additem(menu, label, "15")
-    ml_text(id, "CW_SETTING_TEAMS", label, charsmax(label)); menu_additem(menu, label, "16")
-    ml_text(id, "CW_SETTING_TAGS", label, charsmax(label)); menu_additem(menu, label, "17")
-    ml_text(id, "CW_CONFIG_PRESET", label, charsmax(label)); menu_additem(menu, label, "18")
-    ml_text(id, "CW_CONFIG_MAPS", label, charsmax(label)); menu_additem(menu, label, "19")
-    ml_text(id, "CW_CONFIG_SAVE", label, charsmax(label)); menu_additem(menu, label, "20")
+    formatex(label, charsmax(label), "%L: %s", id, "CW_SETTING_PUG_STYLE", value); menu_additem(menu, label, "10")
+    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_PUG_PERSIST", id, get_pcvar_num(g_CvarPugPersist) ? "CW_ON" : "CW_OFF"); menu_additem(menu, label, "11")
+    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_SCREENSHOTS", id, get_pcvar_num(g_CvarScreenshots) ? "CW_ON" : "CW_OFF"); menu_additem(menu, label, "12")
+    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_ID_SCREENSHOT", id, get_pcvar_num(g_CvarScoreIdScreenshots) ? "CW_ON" : "CW_OFF"); menu_additem(menu, label, "13")
+    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_STOP_SCREENSHOT", id, get_pcvar_num(g_CvarScreenshotOnStop) ? "CW_ON" : "CW_OFF"); menu_additem(menu, label, "14")
+    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_TL_FINISH_ROUND", id, get_pcvar_num(g_CvarTimeLimitFinishRound) ? "CW_ON" : "CW_OFF"); menu_additem(menu, label, "15")
+    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_PLAYOUT_DEFAULT", id, get_pcvar_num(g_CvarPlayoutVoteDefault) ? "CW_PLAYOUT_DEFAULT_CONTINUE" : "CW_PLAYOUT_DEFAULT_END"); menu_additem(menu, label, "16")
+    formatex(label, charsmax(label), "%L: %L", id, "CW_SETTING_HUD_INTERVAL", id, "CW_SECONDS", get_pcvar_num(g_CvarHudInterval)); menu_additem(menu, label, "17")
+    ml_text(id, "CW_SETTING_TEAMS", label, charsmax(label)); menu_additem(menu, label, "18")
+    ml_text(id, "CW_SETTING_TAGS", label, charsmax(label)); menu_additem(menu, label, "19")
+    ml_text(id, "CW_CONFIG_PRESET", label, charsmax(label)); menu_additem(menu, label, "20")
+    ml_text(id, "CW_CONFIG_MAPS", label, charsmax(label)); menu_additem(menu, label, "21")
+    ml_text(id, "CW_CONFIG_SAVE", label, charsmax(label)); menu_additem(menu, label, "22")
     menu_setprop(menu, MPROP_EXIT, MEXIT_ALL); menu_display(id, menu)
+}
+
+stock current_match_length()
+{
+    if (g_Format == FORMAT_WL) return get_pcvar_num(g_CvarWinRounds)
+    if (g_Format == FORMAT_TL) return get_pcvar_num(g_CvarTimeLimitMinutes)
+    return get_pcvar_num(g_CvarHalfRounds)
+}
+
+stock show_match_length_menu(id)
+{
+    if (!safe_configuration_state(id)) return
+    new title[96], label[64], info[8], current = current_match_length()
+    formatex(title, charsmax(title), "%L", id, "CW_MATCH_LENGTH_TITLE")
+    new menu = menu_create(title, "menu_match_length_handler")
+    if (g_Format == FORMAT_MR)
+    {
+        for (new i = 0; i < sizeof g_MrLengthChoices; i++) add_match_length_item(id, menu, g_MrLengthChoices[i], current, "mr")
+    }
+    else if (g_Format == FORMAT_WL)
+    {
+        for (new i = 0; i < sizeof g_WlLengthChoices; i++) add_match_length_item(id, menu, g_WlLengthChoices[i], current, "wl")
+    }
+    else
+    {
+        for (new i = 0; i < sizeof g_TlLengthChoices; i++) add_match_length_item(id, menu, g_TlLengthChoices[i], current, "tl")
+    }
+    if (!match_length_choice_exists(current))
+    {
+        formatex(info, charsmax(info), "%s%d", g_Format == FORMAT_MR ? "mr" : (g_Format == FORMAT_WL ? "wl" : "tl"), current)
+        formatex(label, charsmax(label), "%L", id, g_Format == FORMAT_TL ? "CW_MINUTES_CURRENT" : "CW_ROUNDS_CURRENT", current)
+        menu_additem(menu, label, info)
+    }
+    menu_setprop(menu, MPROP_EXIT, MEXIT_ALL); menu_display(id, menu)
+}
+
+stock add_match_length_item(id, menu, value, current, const format[])
+{
+    new label[64], info[8]
+    formatex(info, charsmax(info), "%s%d", format, value)
+    formatex(label, charsmax(label), "%L", id, equal(format, "tl") ? (value == current ? "CW_MINUTES_CURRENT" : "CW_MINUTES_CHOICE") : (value == current ? "CW_ROUNDS_CURRENT" : "CW_ROUNDS_CHOICE"), value)
+    menu_additem(menu, label, info)
+}
+
+stock bool:match_length_choice_exists(value)
+{
+    if (g_Format == FORMAT_MR)
+    {
+        for (new i = 0; i < sizeof g_MrLengthChoices; i++) if (g_MrLengthChoices[i] == value) return true
+    }
+    else if (g_Format == FORMAT_WL)
+    {
+        for (new i = 0; i < sizeof g_WlLengthChoices; i++) if (g_WlLengthChoices[i] == value) return true
+    }
+    else
+    {
+        for (new i = 0; i < sizeof g_TlLengthChoices; i++) if (g_TlLengthChoices[i] == value) return true
+    }
+    return false
+}
+
+stock show_min_ready_menu(id)
+{
+    if (!safe_configuration_state(id)) return
+    new title[96], label[64], info[8], current = get_pcvar_num(g_CvarMinReady)
+    formatex(title, charsmax(title), "%L", id, "CW_MIN_READY_TITLE")
+    new menu = menu_create(title, "menu_min_ready_handler")
+    for (new i = 0; i < sizeof g_MinReadyChoices; i++)
+    {
+        num_to_str(g_MinReadyChoices[i], info, charsmax(info))
+        formatex(label, charsmax(label), "%L", id, g_MinReadyChoices[i] == current ? "CW_PLAYERS_CURRENT" : "CW_PLAYERS_CHOICE", g_MinReadyChoices[i])
+        menu_additem(menu, label, info)
+    }
+    if (!min_ready_choice_exists(current))
+    {
+        num_to_str(current, info, charsmax(info))
+        formatex(label, charsmax(label), "%L", id, "CW_PLAYERS_CURRENT", current)
+        menu_additem(menu, label, info)
+    }
+    menu_setprop(menu, MPROP_EXIT, MEXIT_ALL); menu_display(id, menu)
+}
+
+stock bool:min_ready_choice_exists(value)
+{
+    for (new i = 0; i < sizeof g_MinReadyChoices; i++) if (g_MinReadyChoices[i] == value) return true
+    return false
 }
 
 stock cycle_format_setting()
@@ -2255,6 +2641,7 @@ stock cw_chat_ml(id, const key[], any:...)
 
 stock bool:start_warmup(bool:resetData)
 {
+    if (map_transition_blocks_mutation(0, false)) return false
     if (!full_runtime_config_valid(false))
     {
         announce_ml("CW_ERR_WARMUP_CONFIG")
@@ -2283,6 +2670,7 @@ stock bool:start_warmup(bool:resetData)
 
 stock start_knife_round()
 {
+    if (map_transition_blocks_mutation(0, false)) return
     if (!full_runtime_config_valid(false))
     {
         announce_ml("CW_ERR_KNIFE_CONFIG")
@@ -2298,8 +2686,9 @@ stock start_knife_round()
     server_cmd("sv_restart 1"); announce_ml("CW_KNIFE_STARTED"); audit_event("knife_start")
 }
 
-stock start_live_match(bool:preserveSides)
+stock bool:start_live_match(bool:preserveSides)
 {
+    if (map_transition_blocks_mutation(0, false)) return false
     new bool:restarting = g_State == STATE_LIVE || g_State == STATE_HALFTIME || g_State == STATE_HALF_READY || g_State == STATE_OVERTIME_VOTE || g_State == STATE_PLAYOUT_VOTE
     if (!full_runtime_config_valid(true))
     {
@@ -2307,7 +2696,7 @@ stock start_live_match(bool:preserveSides)
          * manifest untouched. A pre-live legacy launch may safely unwind. */
         if (!restarting) { restore_legacy_record_mode(); discard_series_manifest(); }
         announce_ml("CW_ERR_MATCH_CONFIG")
-        return
+        return false
     }
     if (restarting)
     {
@@ -2320,7 +2709,7 @@ stock start_live_match(bool:preserveSides)
     {
         restore_legacy_record_mode(); discard_series_manifest()
         announce_ml("CW_ERR_MATCH_CONFIG")
-        return
+        return false
     }
 
     reset_match_data(!preserveSides); reset_ready_players(); snapshot_environment(); apply_environment(false)
@@ -2332,10 +2721,12 @@ stock start_live_match(bool:preserveSides)
     new labelA[MAX_TEAM_LABEL + 1], labelB[MAX_TEAM_LABEL + 1]
     get_team_label(0, labelA, charsmax(labelA)); get_team_label(1, labelB, charsmax(labelB))
     announce_ml("CW_MATCH_STARTED", g_MatchId, labelA, labelB, format, g_MapNumber, g_MapCount)
+    return true
 }
 
 stock begin_lo3(bool:resetRoundTracking, bool:resetTlTimer = false)
 {
+    if (map_transition_blocks_mutation(0, false)) return
     new bool:resetTimerAfterLo3 = resetTlTimer || g_ResetTlTimerAfterLo3
     cancel_lo3_tasks(); if (resetRoundTracking) g_RoundsThisHalf = 0
     g_ResetTlTimerAfterLo3 = resetTimerAfterLo3
@@ -2357,6 +2748,7 @@ stock close_active_lifecycle(const statsEvent[])
 
 stock stop_match(bool:administrator)
 {
+    if (map_transition_blocks_mutation(0, false)) return
     if (crossmap_recovery_pending())
     {
         log_amx("Refused to stop match while cross-map baseline recovery is pending")
@@ -2384,10 +2776,30 @@ stock stop_match(bool:administrator)
 
 stock restart_current_half()
 {
+    if (map_transition_blocks_mutation(0, false)) return
     g_TeamAScore = g_HalfStartA; g_TeamBScore = g_HalfStartB; g_RoundsThisHalf = 0
     g_CaptureHalfBaselineAfterLo3 = true
     audit_event("admin_restart_half"); begin_lo3(false, true)
     announce_ml("CW_HALF_RESTARTED", total_score_a(), total_score_b())
+}
+
+stock bool:restart_whole_match(id, bool:chatFeedback)
+{
+    if (map_transition_blocks_mutation(id, chatFeedback)) return false
+    if (g_State == STATE_OFF)
+    {
+        if (chatFeedback) cw_chat_ml(id, "CW_ERR_RESTART_OFF")
+        else cw_console_ml(id, "CW_ERR_RESTART_OFF")
+        return false
+    }
+    if (!start_live_match(false))
+    {
+        if (chatFeedback) cw_chat_ml(id, "CW_ERR_RESTART_FAILED")
+        else cw_console_ml(id, "CW_ERR_RESTART_FAILED")
+        return false
+    }
+    audit_event("admin_restart_match")
+    return true
 }
 
 stock set_player_ready(id, bool:isReady)

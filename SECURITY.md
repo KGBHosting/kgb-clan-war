@@ -25,6 +25,11 @@ fix and disclosure when the report is confirmed.
   only, and rotate it if exposed.
 - Give the SQL account access only to the dedicated match-statistics schema.
   Never reuse a panel, game-server, or administrative database account.
+- Give the optional web statistics browser a separate account with `SELECT`
+  on only the four `kgb_cw_*` statistics tables. Keep its configuration outside
+  `web/public`, require HTTPS and the browser's mandatory Basic authentication,
+  and never grant the browser create/update/delete privileges. Anonymous web
+  statistics are not supported.
 - SQL player statistics contain Steam authentication IDs and player names.
   Restrict access and define a privacy notice, retention period, and deletion
   process appropriate to the server's users and jurisdiction.

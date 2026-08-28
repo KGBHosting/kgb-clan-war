@@ -10,11 +10,12 @@ credentials nor a database.
 
 ## Release policy
 
-`v0.3.0` is the next qualification candidate. It is not a release until the
-tagged release workflow completes. The earlier stable-version candidate was
-withdrawn when configurable operator branding was added; do not deploy that
-candidate. Promote `v0.3.0` only after its CI and development-server
-qualification evidence is complete.
+`v0.4.0` is an immutable prerelease. Its tag and workflow-produced assets are
+the exact inputs used for Platform development qualification; publishing them
+is not production approval and does not claim that qualification has passed.
+Never move or reuse the tag. Production promotion requires successful CI,
+completed development-server qualification evidence, and a separate explicit
+approval decision.
 
 The qualification line includes the practical AMX Match Deluxe feature
 set: player/team/admin ready modes; max-round, win-limit, and time-limit
@@ -42,9 +43,16 @@ CAL, ESL, or another league's rules.
 | `kgb_clan_war.amxx` | Enabled | Required match controller and operator commands. |
 | `kgb_clan_war_hltv.amxx` | Integration disabled | Records through a connected HLTV proxy or explicitly enabled UDP RCON. |
 | `kgb_clan_war_sql.amxx` | Integration disabled | Persists match, map, half, and player statistics with threaded SQLX queries. |
+| `web/` | Not deployed | Optional standalone, read-only PHP browser for match, map, player, and team statistics. |
 
 The optional plugins consume the lifecycle forward emitted by the core. Keep
 the core before them in `plugins.ini`.
+
+The web browser is a separate operator deployment, not a game-server plugin.
+Existing or plugin-created v0.3 databases require the idempotent
+`sql/migrate-v0.3.0-web-player-index.sql` migration before it is enabled; see
+[`docs/web-stats.md`](docs/web-stats.md) for the authentication, privacy, and
+read-only database boundary.
 
 ## Safe defaults and limitations
 
@@ -118,20 +126,21 @@ access flag.
 
 | Command | Purpose |
 | --- | --- |
-| `amx_cw_menu` | Open match controls. |
+| `amx_cw_menu` | Open state-aware match controls. The same entry is registered in the standard `amxmodmenu` when AMX Mod X's Menus Front-End plugin is loaded. |
 | `amx_cw_warmup` | Enter warmup and clear readiness. |
 | `amx_cw_knife` | Start the knife round and optional stay/swap decision. |
 | `amx_cw_live` | Start a configured match with live-on-three. |
 | `amx_cw_relo3` | Repeat live-on-three without resetting the score. |
 | `amx_cw_swap` | Swap Terrorist and Counter-Terrorist sides. |
 | `amx_cw_restart_half` | Reset the current half. |
-| `amx_cw_restart_match` | Reset the complete match. |
+| `amx_cw_restart_match` | Reset the complete match. Off-state or invalid-configuration attempts are rejected and are not recorded as successful restarts. |
+| `amx_cw_ready_list`, `amx_cw_readylist` | Open the read-only player/team ready list. This view is available to connected players; it contains no mutating controls. |
 | `amx_cw_pug_randomize` | Randomize warmup players when PUG mode is enabled. |
 | `amx_cw_pug_start [random\|manual]` | Start a PUG warmup using the selected team workflow. |
 | `amx_cw_pug_assign <player> <a\|b>` | Assign a player during a manual PUG draft. |
 | `amx_cw_pug_stop` | Stop the active PUG and restore managed server state. |
 | `amx_cw_config_menu` | Open preset, default-map, and saved-snapshot controls. |
-| `amx_cw_setup`, `amx_cw_settings` | Open the interactive teams/tags, format, ready, swap, playout, overtime, PUG, HUD, screenshot, preset, map, and save workflow. |
+| `amx_cw_setup`, `amx_cw_settings` | Open the interactive teams/tags, format and match-length, ready mode and minimum-ready, swap, playout, overtime, PUG, HUD, screenshot, preset, map, and save workflow. |
 | `amx_cw_presets`, `amx_cw_preset <name>` | Browse or apply an installed clean-room league preset. |
 | `amx_cw_map_menu` | Select one or two installed maps from the operator catalog. |
 | `amx_cw_save_config`, `amx_cw_load_saved` | Save/load the non-secret allowlisted menu snapshot. |
@@ -148,15 +157,27 @@ access flag.
 | `amx_match2 <mrXX\|tlXX\|wlXX> <config> [recdemo\|rechltv\|recboth]` | Full one-map launcher using the configured team names. |
 | `amx_match3 <team-a> <team-b> <mrXX\|tlXX\|wlXX> <config> <map2> [recdemo\|rechltv\|recboth]` | Full two-map launcher. Map one is the currently loaded map. |
 | `amx_match4 <mrXX\|tlXX\|wlXX> <config> <map2> [recdemo\|rechltv\|recboth]` | Full two-map launcher using the configured team names. |
-| `amx_matchrestart`, `amx_matchstop`, `amx_matchstart`, `amx_matchrelo3` | Legacy lifecycle aliases routed through the same state machine. |
+| `amx_matchrestart`, `amx_matchstop`, `amx_matchstart` | Legacy lifecycle aliases routed through the same state machine. `amx_matchrestart` refuses while Clan War is off. |
+| `amx_matchrelo3` | Deluxe-compatible current-half restart: restore the current-half baseline score, then run LO3. This deliberately differs from score-preserving `amx_cw_relo3`. |
 | `amx_swapteams`, `amx_randomizeteams` | Legacy team-control aliases with the normal KGB access and state checks. |
 | `amx_cw_status` | Show detailed match status. |
 
 Player chat shortcuts are `/ready`, `/notready`, `/teamready`,
-`/teamnotready`, `/start`, `/score`, and `/cw`; `!` prefixes also work. Bare
+`/teamnotready`, `/readylist`, `/start`, `/score`, and `/cw`; `!` prefixes also work. Bare
 `ready`, `notready`, `teamready`, and `teamnotready` are accepted for legacy
-client binds. `/start`, `/stop`, `/restart`, and `/relo3` still respect the
-configured state and access rules.
+client binds. The admin-only `/relo3` shortcut follows Deluxe behavior and
+restarts the current half; use `amx_cw_relo3` when the score must be preserved.
+`/restart` refuses while Clan War is off. `/start`, `/stop`, `/restart`, and
+`/relo3` still respect the configured state and access rules. The root menu
+shows only state-appropriate actions and asks for confirmation before a whole-
+match reset or stop.
+
+After a validated map-two or persistent-PUG change is queued, the root menu
+temporarily exposes only status and the read-only ready list. Direct commands
+that could restart, stop, replace, or otherwise mutate the match are rejected
+until the change completes or its scheduled validator fails safely. This lock
+preserves the cross-map/PUG transition owner that `plugin_end` must carry into
+the next map.
 
 ## Core configuration
 
@@ -290,8 +311,8 @@ fallback and accepts only a numeric IPv4 destination. Leave
 and the network path is restricted to that proxy.
 
 SQL persistence uses threaded SQLX queries so match writes do not block the
-game loop. v0.3.0 supports the AMX Mod X MySQL/MariaDB SQLX driver and creates
-the fixed `kgb_cw_*` tables listed in
+game loop. v0.4.0 keeps the v0.3 schema and supports the AMX Mod X
+MySQL/MariaDB SQLX driver, creating the fixed `kgb_cw_*` tables listed in
 [`sql/schema.sql`](sql/schema.sql). Configure a least-privilege database account
 in AMX Mod X `sql.cfg`, then set `kgb_cw_sql_enabled 1`. Player rows include
 Steam authentication IDs, map number, current names, team, kills, deaths, and
@@ -313,11 +334,19 @@ The SQL account needs the table create/alter and normal read/write privileges
 used by the plugin. Operators who require a reviewed maintenance-window change
 can instead stop the server and run
 [`sql/migrate-v0.2.0-to-v0.3.0.sql`](sql/migrate-v0.2.0-to-v0.3.0.sql)
-before starting v0.3.0. The script is idempotent and refuses unknown table
-shapes; run it with a maintenance account allowed to create, execute, and drop
+before starting v0.3.0 or later. The script is idempotent and refuses unknown
+table shapes; run it with a maintenance account allowed to create, execute, and drop
 a temporary stored procedure as well as alter the player table. Other SQLX
-drivers are not a supported v0.3.0
-configuration.
+drivers are not supported by the v0.3 schema line.
+
+The optional browser in [`web/`](web/) reads the v0.3 tables without modifying
+them. It uses native PDO prepared statements, escaped output, bounded
+pagination, opaque player links, an out-of-document-root configuration, and a
+default-deny Basic authentication boundary. Deploy it separately with
+`web/public` as the exact document root and a database account limited to
+`SELECT`; do not place database credentials in the game server package or the
+HTTP document root. The exact data semantics, privacy limits, and deployment
+example are in [`docs/web-stats.md`](docs/web-stats.md).
 
 Operators are responsible for an appropriate notice, lawful basis, access
 control, retention period, and deletion process for that personal data. The
@@ -376,8 +405,10 @@ first four bytes are not the AMXX `XXMA` magic used by the Panel artifact gate.
 ./scripts/check-compatibility.sh
 ./scripts/test-runtime-regressions.sh
 ./scripts/test-sql-migration.sh
+./scripts/test-web-stats.sh
+./scripts/test-web-stats-mariadb.sh
 ./scripts/test-install.sh
-./scripts/test-build-reproducibility.sh v0.3.0
+./scripts/test-build-reproducibility.sh v0.4.0
 ```
 
 Compatibility checks compile all three plugins against AMX Mod X `1.8.2`,
@@ -396,7 +427,10 @@ creating a release.
 - `kgb_clan_war.amxx` and `kgb_clan_war.amxx.sha256`
 - `kgb_clan_war_hltv.amxx` and `kgb_clan_war_hltv.amxx.sha256`
 - `kgb_clan_war_sql.amxx` and `kgb_clan_war_sql.amxx.sha256`
-- `kgb-clan-war-v0.3.0.zip` and `kgb-clan-war-v0.3.0.zip.sha256`
+- `kgb-clan-war-v0.4.0.zip` and `kgb-clan-war-v0.4.0.zip.sha256`
+
+The convenience ZIP also contains the optional web statistics source and its
+example configuration. It never contains a live database or access credential.
 
 The ZIP is the convenience distribution: binaries, checksums, safe config
 examples, corresponding source, build/install scripts, license, and security
