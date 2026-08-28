@@ -21,11 +21,13 @@ final class Config
             throw new RuntimeException('The statistics configuration must be outside the public document root.');
         }
 
+        clearstatcache(true, $path);
         $realPath = realpath($path);
         $realPublic = realpath($publicDirectory);
         if ($realPath === false || !is_file($realPath) || !is_readable($realPath)) {
             throw new RuntimeException('The statistics configuration is not readable.');
         }
+        clearstatcache(true, $realPath);
         $permissions = fileperms($realPath);
         if ($permissions !== false && ($permissions & 0o007) !== 0) {
             throw new RuntimeException('The statistics configuration must not be accessible to other users.');

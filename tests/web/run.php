@@ -192,16 +192,19 @@ if ($configPath === false) {
     throw new RuntimeException('Could not create the test configuration fixture.');
 }
 file_put_contents($configPath, "<?php\nreturn " . var_export($validConfig, true) . ";\n");
-chmod($configPath, 0640);
+check(chmod($configPath, 0640), 'Could not restrict the test configuration fixture.');
 check(Config::load($configPath, dirname(__DIR__, 2) . '/web/public')['site']['title'] === 'Test', 'External configuration load failed.');
-chmod($configPath, 0644);
+check(chmod($configPath, 0644), 'Could not make the test configuration fixture world-readable.');
 try {
     Config::load($configPath, dirname(__DIR__, 2) . '/web/public');
     throw new RuntimeException('World-readable configuration was accepted.');
 } catch (RuntimeException $exception) {
     check($exception->getMessage() !== 'World-readable configuration was accepted.', $exception->getMessage());
 } finally {
+    clearstatcache(true, $configPath);
+    $configMode = fileperms($configPath);
     unlink($configPath);
+    check($configMode !== false && ($configMode & 0o777) === 0o644, 'The permission regression fixture did not have mode 0644.');
 }
 
 $symlinkRoot = sys_get_temp_dir() . '/kgb-cw-web-config-' . bin2hex(random_bytes(8));
@@ -226,6 +229,40 @@ try {
     unlink($symlinkTarget);
     rmdir($symlinkPublic);
     rmdir($symlinkRoot);
+}
+
+$retargetRoot = sys_get_temp_dir() . '/kgb-cw-web-retarget-' . bin2hex(random_bytes(8));
+$retargetPublic = $retargetRoot . '/public';
+$retargetSafe = $retargetRoot . '/safe.php';
+$retargetInside = $retargetPublic . '/inside.php';
+$retargetPath = $retargetRoot . '/config.php';
+if (!mkdir($retargetPublic, 0700, true)) {
+    throw new RuntimeException('Could not create the realpath-cache regression fixture.');
+}
+$serializedConfig = "<?php\nreturn " . var_export($validConfig, true) . ";\n";
+file_put_contents($retargetSafe, $serializedConfig);
+file_put_contents($retargetInside, $serializedConfig);
+check(chmod($retargetSafe, 0640), 'Could not restrict the safe retarget fixture.');
+check(chmod($retargetInside, 0640), 'Could not restrict the public retarget fixture.');
+if (!symlink($retargetSafe, $retargetPath)) {
+    throw new RuntimeException('Could not create the safe retarget symlink.');
+}
+check(Config::load($retargetPath, $retargetPublic)['site']['title'] === 'Test', 'Safe retarget fixture was rejected.');
+unlink($retargetPath);
+if (!symlink($retargetInside, $retargetPath)) {
+    throw new RuntimeException('Could not retarget the configuration symlink.');
+}
+try {
+    Config::load($retargetPath, $retargetPublic);
+    throw new RuntimeException('A retargeted config symlink resolved inside the public root.');
+} catch (RuntimeException $exception) {
+    check($exception->getMessage() !== 'A retargeted config symlink resolved inside the public root.', $exception->getMessage());
+} finally {
+    unlink($retargetPath);
+    unlink($retargetSafe);
+    unlink($retargetInside);
+    rmdir($retargetPublic);
+    rmdir($retargetRoot);
 }
 
 $pdo->exec('PRAGMA query_only=ON');
