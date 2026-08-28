@@ -64,6 +64,11 @@ jobs:
           esac
           ./scripts/test-build-reproducibility.sh "$package_version"
 
+      - name: Install web statistics test dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ripgrep
+
       - name: Test read-only web statistics browser
         run: |
           ./scripts/test-web-stats.sh
