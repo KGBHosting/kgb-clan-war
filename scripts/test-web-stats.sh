@@ -48,6 +48,15 @@ if rg --pcre2 -n '^[[:space:]]*uses:[[:space:]]+[^[:space:]]+@(?![0-9a-f]{40}(?:
 	printf 'GitHub Actions dependencies must be pinned to immutable commit SHAs.\n' >&2
 	exit 1
 fi
+for nginx_rate_limit in \
+	'limit_req_zone $binary_remote_addr zone=kgb_cw_stats_per_ip:10m rate=30r/m;' \
+	'limit_req zone=kgb_cw_stats_per_ip burst=10 nodelay;' \
+	'limit_req_status 429;'; do
+	if ! rg -Fq "$nginx_rate_limit" "$ROOT_DIR/docs/web-stats.md"; then
+		printf 'The Nginx web statistics example is missing: %s\n' "$nginx_rate_limit" >&2
+		exit 1
+	fi
+done
 
 php "$ROOT_DIR/tests/web/run.php"
 printf 'PHP lint and read-only repository static checks passed.\n'

@@ -103,8 +103,17 @@ retention/deletion remains an operator process outside this browser.
 
 ## Nginx/PHP-FPM outline
 
-The exact socket and paths depend on the host. The important boundary is the
-document root and the single PHP entry point:
+The exact socket and paths depend on the host. The important boundaries are the
+document root, the single PHP entry point, and upstream per-client throttling.
+Define the shared rate-limit zone in the existing Nginx `http` context, outside
+all `server` blocks:
+
+```nginx
+# nginx.conf, inside the existing http { } block
+limit_req_zone $binary_remote_addr zone=kgb_cw_stats_per_ip:10m rate=30r/m;
+```
+
+Then apply it only to the PHP front controller:
 
 ```nginx
 server {
@@ -118,6 +127,9 @@ server {
     }
 
     location = /index.php {
+        limit_req zone=kgb_cw_stats_per_ip burst=10 nodelay;
+        limit_req_status 429;
+
         include fastcgi_params;
         fastcgi_param SCRIPT_FILENAME $document_root/index.php;
         fastcgi_param KGB_CW_STATS_CONFIG /etc/kgb-clan-war/web-stats.php;
@@ -130,7 +142,12 @@ server {
 
 The application uses query-string routes, so URL rewriting is optional. Ensure
 the web server does not expose dotfiles, backups, configuration files, or
-directory listings.
+directory listings. Tune the example rate and burst from observed authorized
+traffic, but do not remove the per-IP boundary: it limits password guessing and
+expensive repeated aggregate requests before PHP. If Nginx is behind another
+proxy, configure `real_ip` only for explicitly trusted proxy addresses so
+`$binary_remote_addr` represents the client; never trust arbitrary forwarded
+address headers.
 
 ## Reproducible checks
 

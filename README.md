@@ -10,11 +10,12 @@ credentials nor a database.
 
 ## Release policy
 
-`v0.4.0` is the next qualification candidate. It is not a release until the
-tagged release workflow completes. The published `v0.3.0` prerelease remains
-an immutable earlier candidate and must not be moved or reused. Promote
-`v0.4.0` only after its CI and development-server qualification evidence is
-complete.
+`v0.4.0` is an immutable prerelease. Its tag and workflow-produced assets are
+the exact inputs used for Platform development qualification; publishing them
+is not production approval and does not claim that qualification has passed.
+Never move or reuse the tag. Production promotion requires successful CI,
+completed development-server qualification evidence, and a separate explicit
+approval decision.
 
 The qualification line includes the practical AMX Match Deluxe feature
 set: player/team/admin ready modes; max-round, win-limit, and time-limit
