@@ -306,10 +306,55 @@ fi
 grep -Fq 'else restart_current_half()' <<<"$legacy_relo3_block"
 grep -Fq 'if (g_State == STATE_LIVE) restart_current_half()' <<<"$chat_relo3_block"
 require_string "$CORE" 'register_concmd("amx_matchrelo3", "command_legacy_relo3", ADMIN_CFG'
+require_string "$CORE" 'stock bool:start_live_match(bool:preserveSides)'
 require_string "$CORE" 'stock bool:restart_whole_match(id, bool:chatFeedback)'
 restart_off_line="$(awk '/stock bool:restart_whole_match\(id, bool:chatFeedback\)/,/stock set_player_ready\(id, bool:isReady\)/ { if (index($0, "g_State == STATE_OFF")) { print NR; exit } }' "$CORE")"
-restart_start_line="$(awk '/stock bool:restart_whole_match\(id, bool:chatFeedback\)/,/stock set_player_ready\(id, bool:isReady\)/ { if (index($0, "start_live_match(false)")) { print NR; exit } }' "$CORE")"
-test -n "$restart_off_line" && test -n "$restart_start_line" && test "$restart_off_line" -lt "$restart_start_line"
+restart_start_line="$(awk '/stock bool:restart_whole_match\(id, bool:chatFeedback\)/,/stock set_player_ready\(id, bool:isReady\)/ { if (index($0, "if (!start_live_match(false))")) { print NR; exit } }' "$CORE")"
+restart_error_line="$(awk '/stock bool:restart_whole_match\(id, bool:chatFeedback\)/,/stock set_player_ready\(id, bool:isReady\)/ { if (index($0, "CW_ERR_RESTART_FAILED")) { print NR; exit } }' "$CORE")"
+restart_audit_line="$(awk '/stock bool:restart_whole_match\(id, bool:chatFeedback\)/,/stock set_player_ready\(id, bool:isReady\)/ { if (index($0, "audit_event(\"admin_restart_match\")")) { print NR; exit } }' "$CORE")"
+restart_true_line="$(awk '/stock bool:restart_whole_match\(id, bool:chatFeedback\)/,/stock set_player_ready\(id, bool:isReady\)/ { if (index($0, "return true")) { print NR; exit } }' "$CORE")"
+test -n "$restart_off_line" && test -n "$restart_start_line" && test -n "$restart_error_line"
+test -n "$restart_audit_line" && test -n "$restart_true_line"
+test "$restart_off_line" -lt "$restart_start_line"
+test "$restart_start_line" -lt "$restart_error_line"
+test "$restart_error_line" -lt "$restart_audit_line"
+test "$restart_audit_line" -lt "$restart_true_line"
+
+# The four pre-existing fire-and-report launch paths intentionally rely on the
+# global localized configuration announcement, while the destructive restart
+# caller must consume the result and provide command/menu-specific feedback.
+test "$(grep -Fc 'start_live_match(' "$CORE")" -eq 6
+for caller_range in \
+	'public command_live(id, level, cid)|public command_relo3(id, level, cid)' \
+	'if ((equali(text, "/start")|public menu_control_handler(id, menu, item)' \
+	'public menu_control_handler(id, menu, item)|public menu_restart_confirm_handler(id, menu, item)' \
+	'stock check_auto_live()|stock ready_count()'; do
+	start="${caller_range%%|*}"
+	end="${caller_range#*|}"
+	block="$(awk -v start="$start" -v end="$end" 'index($0, start) { active=1 } active { print } active && index($0, end) && !index($0, start) { exit }' "$CORE")"
+	grep -Fq 'start_live_match(' <<<"$block" || {
+		printf 'Missing audited start-live caller in function range: %s\n' "$caller_range" >&2
+		exit 1
+	}
+done
+restart_block="$(awk '/stock bool:restart_whole_match\(id, bool:chatFeedback\)/,/stock set_player_ready\(id, bool:isReady\)/' "$CORE")"
+grep -Fq 'if (!start_live_match(false))' <<<"$restart_block"
+grep -Fq 'CW_ERR_RESTART_FAILED' <<<"$restart_block"
+start_live_block="$(awk '/stock bool:start_live_match\(bool:preserveSides\)/,/stock begin_lo3\(bool:resetRoundTracking/' "$CORE")"
+grep -Fq 'return false' <<<"$start_live_block"
+grep -Fq 'return true' <<<"$start_live_block"
+start_validation_line="$(grep -n 'full_runtime_config_valid(true)' <<<"$start_live_block" | cut -d: -f1 | head -1)"
+start_close_line="$(grep -n 'close_active_lifecycle("restart_match_stop")' <<<"$start_live_block" | cut -d: -f1 | head -1)"
+start_identity_line="$(grep -n 'create_match_id()' <<<"$start_live_block" | cut -d: -f1 | head -1)"
+start_success_line="$(grep -n 'return true' <<<"$start_live_block" | cut -d: -f1 | head -1)"
+test -n "$start_validation_line" && test -n "$start_close_line" && test -n "$start_identity_line" && test -n "$start_success_line"
+test "$start_validation_line" -lt "$start_close_line"
+test "$start_close_line" -lt "$start_identity_line"
+test "$start_identity_line" -lt "$start_success_line"
+if grep -Fq 'admin_restart_match' <<<"$start_live_block"; then
+	printf 'Start-live helper must not claim a successful admin restart.\n' >&2
+	exit 1
+fi
 
 half_start_a=5
 half_start_b=4
@@ -325,6 +370,42 @@ match_state=off
 restart_count=0
 if test "$match_state" != off; then restart_count=$((restart_count + 1)); fi
 test "$restart_count" -eq 0
+
+# Model a rejected destructive restart. Invalid launch input must not change
+# state, match identity, or score, must report failure, and must not emit the
+# successful admin restart audit. The success path does all three explicitly.
+match_state=live
+match_id=existing-match
+score_a=8
+score_b=6
+runtime_valid=0
+restart_audits=0
+restart_errors=0
+start_live_model() {
+	test "$runtime_valid" -eq 1 || return 1
+	match_state=live
+	match_id=new-match
+	score_a=0
+	score_b=0
+}
+restart_whole_model() {
+	if ! start_live_model; then
+		restart_errors=$((restart_errors + 1))
+		return 1
+	fi
+	restart_audits=$((restart_audits + 1))
+}
+before_restart="$match_state|$match_id|$score_a|$score_b"
+if restart_whole_model; then
+	printf 'Rejected whole-match restart unexpectedly reported success.\n' >&2
+	exit 1
+fi
+test "$match_state|$match_id|$score_a|$score_b" = "$before_restart"
+test "$restart_audits|$restart_errors" = '0|1'
+runtime_valid=1
+restart_whole_model
+test "$match_state|$match_id|$score_a|$score_b" = 'live|new-match|0|0'
+test "$restart_audits|$restart_errors" = '1|1'
 
 # The root menu is state-aware, destructive whole-match operations are
 # confirmed, and read-only ready information is available without admin flags.
@@ -365,8 +446,8 @@ test -n "$pending_menu_line" && test -n "$restart_menu_line" && test "$pending_m
 
 for function_range in \
 	'stock bool:start_warmup(bool:resetData)|stock start_knife_round()' \
-	'stock start_knife_round()|stock start_live_match(bool:preserveSides)' \
-	'stock start_live_match(bool:preserveSides)|stock begin_lo3(bool:resetRoundTracking' \
+	'stock start_knife_round()|stock bool:start_live_match(bool:preserveSides)' \
+	'stock bool:start_live_match(bool:preserveSides)|stock begin_lo3(bool:resetRoundTracking' \
 	'stock begin_lo3(bool:resetRoundTracking|stock close_active_lifecycle' \
 	'stock stop_match(bool:administrator)|stock restart_current_half()' \
 	'stock restart_current_half()|stock bool:restart_whole_match' \

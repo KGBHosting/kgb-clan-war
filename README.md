@@ -132,7 +132,7 @@ access flag.
 | `amx_cw_relo3` | Repeat live-on-three without resetting the score. |
 | `amx_cw_swap` | Swap Terrorist and Counter-Terrorist sides. |
 | `amx_cw_restart_half` | Reset the current half. |
-| `amx_cw_restart_match` | Reset the complete match. |
+| `amx_cw_restart_match` | Reset the complete match. Off-state or invalid-configuration attempts are rejected and are not recorded as successful restarts. |
 | `amx_cw_ready_list`, `amx_cw_readylist` | Open the read-only player/team ready list. This view is available to connected players; it contains no mutating controls. |
 | `amx_cw_pug_randomize` | Randomize warmup players when PUG mode is enabled. |
 | `amx_cw_pug_start [random\|manual]` | Start a PUG warmup using the selected team workflow. |

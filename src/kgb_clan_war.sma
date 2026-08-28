@@ -2686,9 +2686,9 @@ stock start_knife_round()
     server_cmd("sv_restart 1"); announce_ml("CW_KNIFE_STARTED"); audit_event("knife_start")
 }
 
-stock start_live_match(bool:preserveSides)
+stock bool:start_live_match(bool:preserveSides)
 {
-    if (map_transition_blocks_mutation(0, false)) return
+    if (map_transition_blocks_mutation(0, false)) return false
     new bool:restarting = g_State == STATE_LIVE || g_State == STATE_HALFTIME || g_State == STATE_HALF_READY || g_State == STATE_OVERTIME_VOTE || g_State == STATE_PLAYOUT_VOTE
     if (!full_runtime_config_valid(true))
     {
@@ -2696,7 +2696,7 @@ stock start_live_match(bool:preserveSides)
          * manifest untouched. A pre-live legacy launch may safely unwind. */
         if (!restarting) { restore_legacy_record_mode(); discard_series_manifest(); }
         announce_ml("CW_ERR_MATCH_CONFIG")
-        return
+        return false
     }
     if (restarting)
     {
@@ -2709,7 +2709,7 @@ stock start_live_match(bool:preserveSides)
     {
         restore_legacy_record_mode(); discard_series_manifest()
         announce_ml("CW_ERR_MATCH_CONFIG")
-        return
+        return false
     }
 
     reset_match_data(!preserveSides); reset_ready_players(); snapshot_environment(); apply_environment(false)
@@ -2721,6 +2721,7 @@ stock start_live_match(bool:preserveSides)
     new labelA[MAX_TEAM_LABEL + 1], labelB[MAX_TEAM_LABEL + 1]
     get_team_label(0, labelA, charsmax(labelA)); get_team_label(1, labelB, charsmax(labelB))
     announce_ml("CW_MATCH_STARTED", g_MatchId, labelA, labelB, format, g_MapNumber, g_MapCount)
+    return true
 }
 
 stock begin_lo3(bool:resetRoundTracking, bool:resetTlTimer = false)
@@ -2791,7 +2792,12 @@ stock bool:restart_whole_match(id, bool:chatFeedback)
         else cw_console_ml(id, "CW_ERR_RESTART_OFF")
         return false
     }
-    start_live_match(false)
+    if (!start_live_match(false))
+    {
+        if (chatFeedback) cw_chat_ml(id, "CW_ERR_RESTART_FAILED")
+        else cw_console_ml(id, "CW_ERR_RESTART_FAILED")
+        return false
+    }
     audit_event("admin_restart_match")
     return true
 }
