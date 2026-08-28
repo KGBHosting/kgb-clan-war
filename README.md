@@ -118,7 +118,7 @@ access flag.
 
 | Command | Purpose |
 | --- | --- |
-| `amx_cw_menu` | Open match controls. |
+| `amx_cw_menu` | Open state-aware match controls. The same entry is registered in the standard `amxmodmenu` when AMX Mod X's Menus Front-End plugin is loaded. |
 | `amx_cw_warmup` | Enter warmup and clear readiness. |
 | `amx_cw_knife` | Start the knife round and optional stay/swap decision. |
 | `amx_cw_live` | Start a configured match with live-on-three. |
@@ -126,12 +126,13 @@ access flag.
 | `amx_cw_swap` | Swap Terrorist and Counter-Terrorist sides. |
 | `amx_cw_restart_half` | Reset the current half. |
 | `amx_cw_restart_match` | Reset the complete match. |
+| `amx_cw_ready_list`, `amx_cw_readylist` | Open the read-only player/team ready list. This view is available to connected players; it contains no mutating controls. |
 | `amx_cw_pug_randomize` | Randomize warmup players when PUG mode is enabled. |
 | `amx_cw_pug_start [random\|manual]` | Start a PUG warmup using the selected team workflow. |
 | `amx_cw_pug_assign <player> <a\|b>` | Assign a player during a manual PUG draft. |
 | `amx_cw_pug_stop` | Stop the active PUG and restore managed server state. |
 | `amx_cw_config_menu` | Open preset, default-map, and saved-snapshot controls. |
-| `amx_cw_setup`, `amx_cw_settings` | Open the interactive teams/tags, format, ready, swap, playout, overtime, PUG, HUD, screenshot, preset, map, and save workflow. |
+| `amx_cw_setup`, `amx_cw_settings` | Open the interactive teams/tags, format and match-length, ready mode and minimum-ready, swap, playout, overtime, PUG, HUD, screenshot, preset, map, and save workflow. |
 | `amx_cw_presets`, `amx_cw_preset <name>` | Browse or apply an installed clean-room league preset. |
 | `amx_cw_map_menu` | Select one or two installed maps from the operator catalog. |
 | `amx_cw_save_config`, `amx_cw_load_saved` | Save/load the non-secret allowlisted menu snapshot. |
@@ -148,15 +149,20 @@ access flag.
 | `amx_match2 <mrXX\|tlXX\|wlXX> <config> [recdemo\|rechltv\|recboth]` | Full one-map launcher using the configured team names. |
 | `amx_match3 <team-a> <team-b> <mrXX\|tlXX\|wlXX> <config> <map2> [recdemo\|rechltv\|recboth]` | Full two-map launcher. Map one is the currently loaded map. |
 | `amx_match4 <mrXX\|tlXX\|wlXX> <config> <map2> [recdemo\|rechltv\|recboth]` | Full two-map launcher using the configured team names. |
-| `amx_matchrestart`, `amx_matchstop`, `amx_matchstart`, `amx_matchrelo3` | Legacy lifecycle aliases routed through the same state machine. |
+| `amx_matchrestart`, `amx_matchstop`, `amx_matchstart` | Legacy lifecycle aliases routed through the same state machine. `amx_matchrestart` refuses while Clan War is off. |
+| `amx_matchrelo3` | Deluxe-compatible current-half restart: restore the current-half baseline score, then run LO3. This deliberately differs from score-preserving `amx_cw_relo3`. |
 | `amx_swapteams`, `amx_randomizeteams` | Legacy team-control aliases with the normal KGB access and state checks. |
 | `amx_cw_status` | Show detailed match status. |
 
 Player chat shortcuts are `/ready`, `/notready`, `/teamready`,
-`/teamnotready`, `/start`, `/score`, and `/cw`; `!` prefixes also work. Bare
+`/teamnotready`, `/readylist`, `/start`, `/score`, and `/cw`; `!` prefixes also work. Bare
 `ready`, `notready`, `teamready`, and `teamnotready` are accepted for legacy
-client binds. `/start`, `/stop`, `/restart`, and `/relo3` still respect the
-configured state and access rules.
+client binds. The admin-only `/relo3` shortcut follows Deluxe behavior and
+restarts the current half; use `amx_cw_relo3` when the score must be preserved.
+`/restart` refuses while Clan War is off. `/start`, `/stop`, `/restart`, and
+`/relo3` still respect the configured state and access rules. The root menu
+shows only state-appropriate actions and asks for confirmation before a whole-
+match reset or stop.
 
 ## Core configuration
 

@@ -292,6 +292,56 @@ test "$frozen_enabled" -eq 1 && test "$frozen_auto" -eq 1 && test "$live_cvar_en
 require_string "$CORE" 'new bool:resetTimerAfterLo3 = resetTlTimer || g_ResetTlTimerAfterLo3'
 require_string "$CORE" 'if (g_ResetTlTimerAfterLo3 && g_Format == FORMAT_TL && !g_InOvertime) schedule_time_limit_half()'
 
+# KGB's explicit re-LO3 preserves the score, while the legacy Deluxe alias and
+# chat shortcut restore the current-half baseline before running LO3. A whole-
+# match restart cannot create a match from the off state.
+kgb_relo3_block="$(awk '/public command_relo3\(id, level, cid\)/,/public command_legacy_relo3\(id, level, cid\)/' "$CORE")"
+legacy_relo3_block="$(awk '/public command_legacy_relo3\(id, level, cid\)/,/public command_swap\(id, level, cid\)/' "$CORE")"
+chat_relo3_block="$(awk '/if \(\(equali\(text, "\/relo3"\)/,/if \(\(equali\(text, "\/stop"\)/' "$CORE")"
+grep -Fq 'else begin_lo3(false)' <<<"$kgb_relo3_block"
+if grep -Fq 'restart_current_half()' <<<"$kgb_relo3_block"; then
+	printf 'KGB-specific amx_cw_relo3 unexpectedly resets the current-half score.\n' >&2
+	exit 1
+fi
+grep -Fq 'else restart_current_half()' <<<"$legacy_relo3_block"
+grep -Fq 'if (g_State == STATE_LIVE) restart_current_half()' <<<"$chat_relo3_block"
+require_string "$CORE" 'register_concmd("amx_matchrelo3", "command_legacy_relo3", ADMIN_CFG'
+require_string "$CORE" 'stock bool:restart_whole_match(id, bool:chatFeedback)'
+restart_off_line="$(awk '/stock bool:restart_whole_match\(id, bool:chatFeedback\)/,/stock set_player_ready\(id, bool:isReady\)/ { if (index($0, "g_State == STATE_OFF")) { print NR; exit } }' "$CORE")"
+restart_start_line="$(awk '/stock bool:restart_whole_match\(id, bool:chatFeedback\)/,/stock set_player_ready\(id, bool:isReady\)/ { if (index($0, "start_live_match(false)")) { print NR; exit } }' "$CORE")"
+test -n "$restart_off_line" && test -n "$restart_start_line" && test "$restart_off_line" -lt "$restart_start_line"
+
+half_start_a=5
+half_start_b=4
+score_a=8
+score_b=6
+# amx_cw_relo3: begin_lo3(false), scores stay untouched.
+test "$score_a|$score_b" = '8|6'
+# amx_matchrelo3 and /relo3: restart_current_half(), scores return to baseline.
+score_a="$half_start_a"
+score_b="$half_start_b"
+test "$score_a|$score_b" = '5|4'
+match_state=off
+restart_count=0
+if test "$match_state" != off; then restart_count=$((restart_count + 1)); fi
+test "$restart_count" -eq 0
+
+# The root menu is state-aware, destructive whole-match operations are
+# confirmed, and read-only ready information is available without admin flags.
+require_string "$CORE" 'stock bool:control_swap_allowed()'
+require_string "$CORE" 'stock show_restart_match_confirmation(id)'
+require_string "$CORE" 'stock show_stop_confirmation(id)'
+require_string "$CORE" 'public menu_restart_confirm_handler(id, menu, item)'
+require_string "$CORE" 'public menu_stop_confirmation_handler(id, menu, item)'
+require_string "$CORE" 'register_concmd("amx_cw_ready_list", "command_ready_list", 0'
+require_string "$CORE" 'register_concmd("amx_cw_readylist", "command_ready_list", 0'
+require_string "$CORE" 'stock show_ready_list_menu(id)'
+require_string "$CORE" 'return ITEM_DISABLED'
+require_string "$CORE" 'AddMenuItem(g_DisplayName, "amx_cw_menu", ADMIN_CFG, PLUGIN_NAME)'
+require_string "$CORE" 'stock show_match_length_menu(id)'
+require_string "$CORE" 'stock show_min_ready_menu(id)'
+require_string "$CORE" 'set_pcvar_num(g_CvarMinReady, clamp(str_to_num(info), 1, 32))'
+
 # Model the SQL callback contract deterministically. A transient failure does
 # not advance the acknowledged session baseline; retries and overlapping
 # callbacks use absolute maxima, so either callback order is idempotent.
