@@ -28,7 +28,7 @@ for source in "$CORE" "$HLTV" "$SQL"; do
 		printf 'Missing required source: %s\n' "${source#"$ROOT_DIR/"}" >&2
 		exit 1
 	}
-	require_string "$source" '#define PLUGIN_VERSION "0.5.0"'
+	require_string "$source" '#define PLUGIN_VERSION "1.0.0"'
 	require_string "$source" 'SPDX-License-Identifier: GPL-3.0-or-later'
 	if awk 'length($0) > 511 { found=1 } END { exit found ? 0 : 1 }' "$source"; then
 		printf 'A source line exceeds the AMX Mod X 1.8.2 compiler limit: %s\n' "${source#"$ROOT_DIR/"}" >&2
@@ -155,12 +155,15 @@ require_string "$CORE_CONFIG" 'kgb_cw_playout_vote_default 1'
 require_string "$CORE_CONFIG" 'kgb_cw_time_limit_finish_round 1'
 require_string "$CORE_CONFIG" 'kgb_cw_screenshot_on_stop 0'
 require_string "$CORE_CONFIG" 'kgb_cw_file_stats 0'
-require_string "$README" '`v0.4.0` is an immutable prerelease.'
-require_string "$README" 'The current source prepares the `v0.5.0` qualification candidate.'
-require_string "$README" 'kgb-clan-war-v0.5.0.zip'
-require_string "$CHANGELOG" '## 0.5.0 - qualification candidate'
+require_string "$README" '`v0.5.0` is the final immutable qualification prerelease.'
+require_string "$README" 'The current source prepares the initial stable `v1.0.0` release'
+require_string "$README" 'kgb-clan-war-v1.0.0.zip'
+require_string "$CHANGELOG" '## 1.0.0 - initial stable release'
 require_string "$CHANGELOG" '`amx_cw_safety_status`'
 require_string "$README" 'KGB Hosting may install, run, modify, and redistribute it'
+require_string "$README" 'Server operators outside KGB Hosting can'
+require_string "$README" 'Independent operators can set `kgb_cw_display_name` and'
+require_string "$README" '`kgb_cw_chat_prefix` to their own truthful presentation'
 require_string "$README" 'does not grant trademark rights'
 
 if grep -Eq 'client_print.*"\[KGB CW\]|console_print.*"\[KGB CW\]|menu_create\("' "$CORE"; then

@@ -8,7 +8,7 @@
 #include <fun>
 
 #define PLUGIN_NAME "KGB Clan War"
-#define PLUGIN_VERSION "0.5.0"
+#define PLUGIN_VERSION "1.0.0"
 #define PLUGIN_AUTHOR "KGB Hosting"
 
 #define DEFAULT_DISPLAY_NAME "KGB Clan War"
