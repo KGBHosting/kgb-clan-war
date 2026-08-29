@@ -2,7 +2,8 @@
 
 KGB Clan War is a GPL-licensed AMX Mod X match controller for Counter-Strike
 1.6. It is an independently implemented, reviewable alternative to shipping
-opaque legacy match-plugin binaries.
+opaque legacy match-plugin binaries. Server operators outside KGB Hosting can
+use KGB Clan War; the in-game display name and chat prefix are configurable.
 
 The core plugin owns the match state. HLTV recording and SQL statistics are
 separate, optional plugins so a normal Clan War server needs neither network
@@ -10,17 +11,15 @@ credentials nor a database.
 
 ## Release policy
 
-`v0.4.0` is an immutable prerelease. Its tag and workflow-produced assets are
-the exact inputs used for Platform development qualification; publishing them
-is not production approval and does not claim that qualification has passed.
-Never move or reuse the tag. Production promotion requires successful CI,
-completed development-server qualification evidence, and a separate explicit
-approval decision.
+`v0.5.0` is the final immutable qualification prerelease. Its exact source and
+artifacts completed Platform development-server qualification. Never move or
+reuse an existing release tag.
 
-The current source prepares the `v0.5.0` qualification candidate. It adds a
-non-mutating, admin-only safety-status command so operators can verify the
-configured and effective local file-stat policy through one stable response.
-See [CHANGELOG.md](CHANGELOG.md) for candidate release notes.
+The current source prepares the initial stable `v1.0.0` release from that
+qualified code. It does not change match behavior or safe defaults. Publishing
+the plugin is separate from promoting a Platform change to production; each
+system keeps its own CI, deployment, and approval gates. See
+[CHANGELOG.md](CHANGELOG.md) for the stable release notes.
 
 The qualification line includes the practical AMX Match Deluxe feature
 set: player/team/admin ready modes; max-round, win-limit, and time-limit
@@ -324,7 +323,7 @@ fallback and accepts only a numeric IPv4 destination. Leave
 and the network path is restricted to that proxy.
 
 SQL persistence uses threaded SQLX queries so match writes do not block the
-game loop. v0.4.0 and v0.5.0 keep the v0.3 schema and support the AMX Mod X
+game loop. v0.4.0, v0.5.0, and v1.0.0 keep the v0.3 schema and support the AMX Mod X
 MySQL/MariaDB SQLX driver, creating the fixed `kgb_cw_*` tables listed in
 [`sql/schema.sql`](sql/schema.sql). Configure a least-privilege database account
 in AMX Mod X `sql.cfg`, then set `kgb_cw_sql_enabled 1`. Player rows include
@@ -421,7 +420,7 @@ first four bytes are not the AMXX `XXMA` magic used by the Panel artifact gate.
 ./scripts/test-web-stats.sh
 ./scripts/test-web-stats-mariadb.sh
 ./scripts/test-install.sh
-./scripts/test-build-reproducibility.sh v0.5.0
+./scripts/test-build-reproducibility.sh v1.0.0
 ```
 
 Compatibility checks compile all three plugins against AMX Mod X `1.8.2`,
@@ -440,7 +439,7 @@ creating a release.
 - `kgb_clan_war.amxx` and `kgb_clan_war.amxx.sha256`
 - `kgb_clan_war_hltv.amxx` and `kgb_clan_war_hltv.amxx.sha256`
 - `kgb_clan_war_sql.amxx` and `kgb_clan_war_sql.amxx.sha256`
-- `kgb-clan-war-v0.5.0.zip` and `kgb-clan-war-v0.5.0.zip.sha256`
+- `kgb-clan-war-v1.0.0.zip` and `kgb-clan-war-v1.0.0.zip.sha256`
 
 The convenience ZIP also contains the optional web statistics source and its
 example configuration. It never contains a live database or access credential.
