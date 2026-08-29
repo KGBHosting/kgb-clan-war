@@ -12,6 +12,7 @@ PRESET_CATALOG="$ROOT_DIR/configs/kgb_clan_war_presets.ini.example"
 MAP_CATALOG="$ROOT_DIR/configs/kgb_clan_war_maps.ini.example"
 LANG_CATALOG="$ROOT_DIR/data/lang/kgb_clan_war.txt"
 README="$ROOT_DIR/README.md"
+CHANGELOG="$ROOT_DIR/CHANGELOG.md"
 
 require_string() {
 	local file="$1"
@@ -27,7 +28,7 @@ for source in "$CORE" "$HLTV" "$SQL"; do
 		printf 'Missing required source: %s\n' "${source#"$ROOT_DIR/"}" >&2
 		exit 1
 	}
-	require_string "$source" '#define PLUGIN_VERSION "0.4.0"'
+	require_string "$source" '#define PLUGIN_VERSION "0.5.0"'
 	require_string "$source" 'SPDX-License-Identifier: GPL-3.0-or-later'
 	if awk 'length($0) > 511 { found=1 } END { exit found ? 0 : 1 }' "$source"; then
 		printf 'A source line exceeds the AMX Mod X 1.8.2 compiler limit: %s\n' "${source#"$ROOT_DIR/"}" >&2
@@ -43,9 +44,12 @@ for command in \
 	amx_matchrestart amx_matchstop amx_matchstart amx_matchrelo3 amx_swapteams amx_randomizeteams \
 	amx_cw_presets amx_cw_preset amx_cw_map_menu amx_cw_save_config amx_cw_load_saved \
 	amx_cw_teams amx_cw_tags amx_cw_maps amx_cw_stop amx_cw_score amx_cw_scoreids \
-	amx_cw_scoreids_snapshot amx_cw_recover amx_cw_status; do
+	amx_cw_scoreids_snapshot amx_cw_recover amx_cw_safety_status amx_cw_status; do
 	require_string "$CORE" "\"$command\""
 done
+
+require_string "$CORE" 'register_concmd("amx_cw_safety_status", "command_safety_status", ADMIN_CFG'
+require_string "$CORE" 'KGB_CW_SAFETY version=%s state=%s series_policy_frozen=%d file_stats_configured=%d file_stats_effective=%d'
 
 for cvar in \
 	kgb_cw_format kgb_cw_ready_mode kgb_cw_time_limit_minutes kgb_cw_playout \
@@ -152,6 +156,10 @@ require_string "$CORE_CONFIG" 'kgb_cw_time_limit_finish_round 1'
 require_string "$CORE_CONFIG" 'kgb_cw_screenshot_on_stop 0'
 require_string "$CORE_CONFIG" 'kgb_cw_file_stats 0'
 require_string "$README" '`v0.4.0` is an immutable prerelease.'
+require_string "$README" 'The current source prepares the `v0.5.0` qualification candidate.'
+require_string "$README" 'kgb-clan-war-v0.5.0.zip'
+require_string "$CHANGELOG" '## 0.5.0 - qualification candidate'
+require_string "$CHANGELOG" '`amx_cw_safety_status`'
 require_string "$README" 'KGB Hosting may install, run, modify, and redistribute it'
 require_string "$README" 'does not grant trademark rights'
 

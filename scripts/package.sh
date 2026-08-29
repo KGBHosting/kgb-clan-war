@@ -111,7 +111,7 @@ cp "$ROOT_DIR/tests/sql"/*.sql "$STAGE_DIR/tests/sql/"
 cp "$ROOT_DIR/tests/web"/*.php "$STAGE_DIR/tests/web/"
 cp "$ROOT_DIR"/docs/*.md "$STAGE_DIR/docs/"
 cp -R "$ROOT_DIR/web" "$STAGE_DIR/"
-cp "$ROOT_DIR/README.md" "$ROOT_DIR/LICENSE" "$ROOT_DIR/SECURITY.md" "$STAGE_DIR/"
+cp "$ROOT_DIR/README.md" "$ROOT_DIR/CHANGELOG.md" "$ROOT_DIR/LICENSE" "$ROOT_DIR/SECURITY.md" "$STAGE_DIR/"
 
 find "$STAGE_DIR" -type d -exec chmod 0755 {} +
 find "$STAGE_DIR" -type f -exec chmod 0644 {} +

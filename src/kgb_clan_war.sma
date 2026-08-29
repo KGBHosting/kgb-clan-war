@@ -8,7 +8,7 @@
 #include <fun>
 
 #define PLUGIN_NAME "KGB Clan War"
-#define PLUGIN_VERSION "0.4.0"
+#define PLUGIN_VERSION "0.5.0"
 #define PLUGIN_AUTHOR "KGB Hosting"
 
 #define DEFAULT_DISPLAY_NAME "KGB Clan War"
@@ -300,6 +300,7 @@ public plugin_init()
     register_concmd("amx_matchrelo3", "command_legacy_relo3", ADMIN_CFG, "- reset the current half with LO3")
     register_concmd("amx_swapteams", "command_swap", ADMIN_CFG, "- compatibility alias")
     register_concmd("amx_randomizeteams", "command_pug_randomize", ADMIN_CFG, "- compatibility alias")
+    register_concmd("amx_cw_safety_status", "command_safety_status", ADMIN_CFG, "- show non-secret safety status")
     register_concmd("amx_cw_status", "command_status", 0, "- show detailed status")
     register_clcmd("say", "command_say")
     register_clcmd("say_team", "command_say")
@@ -732,6 +733,15 @@ public command_recover(id, level, cid)
 
 public command_score(id) { print_score(id, false); return PLUGIN_HANDLED; }
 public command_status(id) { print_score(id, true); return PLUGIN_HANDLED; }
+
+public command_safety_status(id, level, cid)
+{
+    if (!cmd_access(id, level, cid, 1)) return PLUGIN_HANDLED
+    new stateText[24]
+    state_name(stateText, charsmax(stateText))
+    console_print(id, "KGB_CW_SAFETY version=%s state=%s series_policy_frozen=%d file_stats_configured=%d file_stats_effective=%d", PLUGIN_VERSION, stateText, g_SeriesManifestCaptured ? 1 : 0, get_pcvar_num(g_CvarFileStats), series_extra_number(SC_FILE_STATS, g_CvarFileStats))
+    return PLUGIN_HANDLED
+}
 
 public command_scoreids(id, level, cid)
 {
