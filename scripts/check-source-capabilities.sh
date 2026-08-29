@@ -43,9 +43,12 @@ for command in \
 	amx_matchrestart amx_matchstop amx_matchstart amx_matchrelo3 amx_swapteams amx_randomizeteams \
 	amx_cw_presets amx_cw_preset amx_cw_map_menu amx_cw_save_config amx_cw_load_saved \
 	amx_cw_teams amx_cw_tags amx_cw_maps amx_cw_stop amx_cw_score amx_cw_scoreids \
-	amx_cw_scoreids_snapshot amx_cw_recover amx_cw_status; do
+	amx_cw_scoreids_snapshot amx_cw_recover amx_cw_safety_status amx_cw_status; do
 	require_string "$CORE" "\"$command\""
 done
+
+require_string "$CORE" 'register_concmd("amx_cw_safety_status", "command_safety_status", ADMIN_CFG'
+require_string "$CORE" 'KGB_CW_SAFETY version=%s state=%s series_policy_frozen=%d file_stats_configured=%d file_stats_effective=%d'
 
 for cvar in \
 	kgb_cw_format kgb_cw_ready_mode kgb_cw_time_limit_minutes kgb_cw_playout \

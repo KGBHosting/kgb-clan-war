@@ -648,6 +648,9 @@ attempt_invalid_replacement enabled player halves 1 de_dust2 '' 1 15 5 0 10000 1
 attempt_invalid_replacement menu_save player halves 1 de_dust2 '' 1 15 5 0 10000 15 1 de_dust2 1 2
 
 require_string "$CORE" 'g_CvarFileStats = register_cvar("kgb_cw_file_stats", "0")'
+require_string "$CORE" 'register_concmd("amx_cw_safety_status", "command_safety_status", ADMIN_CFG'
+require_string "$CORE" 'get_pcvar_num(g_CvarFileStats), series_extra_number(SC_FILE_STATS, g_CvarFileStats)'
+require_string "$CORE" 'KGB_CW_SAFETY version=%s state=%s series_policy_frozen=%d file_stats_configured=%d file_stats_effective=%d'
 
 "$ROOT_DIR/scripts/test-filesystem-semantics.sh"
 printf 'Runtime state-model and source regression checks passed.\n'

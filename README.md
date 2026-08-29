@@ -160,6 +160,7 @@ access flag.
 | `amx_matchrestart`, `amx_matchstop`, `amx_matchstart` | Legacy lifecycle aliases routed through the same state machine. `amx_matchrestart` refuses while Clan War is off. |
 | `amx_matchrelo3` | Deluxe-compatible current-half restart: restore the current-half baseline score, then run LO3. This deliberately differs from score-preserving `amx_cw_relo3`. |
 | `amx_swapteams`, `amx_randomizeteams` | Legacy team-control aliases with the normal KGB access and state checks. |
+| `amx_cw_safety_status` | Print one admin-only, machine-readable line with the plugin version, match state, series-policy freeze status, and configured/effective local file-stat values. This command does not mutate state or expose credentials. |
 | `amx_cw_status` | Show detailed match status. |
 
 Player chat shortcuts are `/ready`, `/notready`, `/teamready`,
@@ -242,6 +243,13 @@ Changing these CVARs during a live match does not change that match; the new
 values apply to the next series. This includes scoring, ready/swap/overtime,
 playout, screenshots/file statistics, phase configs, environment changes,
 client demos, and HLTV recording policy.
+
+Run `amx_cw_safety_status` from an authorized admin or server console to verify
+the local file-stat policy without relying on generic CVAR-query formatting.
+`file_stats_configured` is the current CVAR value. `file_stats_effective` is
+the immutable value captured for an active series, or the current value when
+no series policy is frozen. The stable `KGB_CW_SAFETY` prefix is intended for
+operator health checks and contains no password or player identity.
 
 Every launch validates the complete managed/series policy plus the
 user-controlled base booleans `kgb_cw_enabled` and
