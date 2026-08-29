@@ -17,6 +17,11 @@ Never move or reuse the tag. Production promotion requires successful CI,
 completed development-server qualification evidence, and a separate explicit
 approval decision.
 
+The current source prepares the `v0.5.0` qualification candidate. It adds a
+non-mutating, admin-only safety-status command so operators can verify the
+configured and effective local file-stat policy through one stable response.
+See [CHANGELOG.md](CHANGELOG.md) for candidate release notes.
+
 The qualification line includes the practical AMX Match Deluxe feature
 set: player/team/admin ready modes; max-round, win-limit, and time-limit
 formats; clinch/always/voted playout; knife stay/swap voting; team names and tags; one- or two-map
@@ -319,7 +324,7 @@ fallback and accepts only a numeric IPv4 destination. Leave
 and the network path is restricted to that proxy.
 
 SQL persistence uses threaded SQLX queries so match writes do not block the
-game loop. v0.4.0 keeps the v0.3 schema and supports the AMX Mod X
+game loop. v0.4.0 and v0.5.0 keep the v0.3 schema and support the AMX Mod X
 MySQL/MariaDB SQLX driver, creating the fixed `kgb_cw_*` tables listed in
 [`sql/schema.sql`](sql/schema.sql). Configure a least-privilege database account
 in AMX Mod X `sql.cfg`, then set `kgb_cw_sql_enabled 1`. Player rows include
@@ -416,7 +421,7 @@ first four bytes are not the AMXX `XXMA` magic used by the Panel artifact gate.
 ./scripts/test-web-stats.sh
 ./scripts/test-web-stats-mariadb.sh
 ./scripts/test-install.sh
-./scripts/test-build-reproducibility.sh v0.4.0
+./scripts/test-build-reproducibility.sh v0.5.0
 ```
 
 Compatibility checks compile all three plugins against AMX Mod X `1.8.2`,
@@ -435,7 +440,7 @@ creating a release.
 - `kgb_clan_war.amxx` and `kgb_clan_war.amxx.sha256`
 - `kgb_clan_war_hltv.amxx` and `kgb_clan_war_hltv.amxx.sha256`
 - `kgb_clan_war_sql.amxx` and `kgb_clan_war_sql.amxx.sha256`
-- `kgb-clan-war-v0.4.0.zip` and `kgb-clan-war-v0.4.0.zip.sha256`
+- `kgb-clan-war-v0.5.0.zip` and `kgb-clan-war-v0.5.0.zip.sha256`
 
 The convenience ZIP also contains the optional web statistics source and its
 example configuration. It never contains a live database or access credential.
