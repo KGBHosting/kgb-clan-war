@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Skip bot/HLTV player-stat reads during join, before bot CS private data may
+  exist. Per-slot state still resets, and human join statistics and opt-in demo
+  initialization retain their existing behavior.
 - Replaced overlapping round, halftime, and match announcements with a single
   synchronized HUD message. The recurring ready/score HUD uses a separate
   synchronization object, and chat/server logs retain every announcement.

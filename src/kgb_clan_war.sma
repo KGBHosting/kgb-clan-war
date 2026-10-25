@@ -351,6 +351,8 @@ public plugin_end()
 public client_putinserver(id)
 {
     clear_client_state(id)
+    // Bot private data may not exist yet; half stats and demos are human-only.
+    if (is_user_bot(id) || is_user_hltv(id)) return
     g_HalfKillsStart[id] = get_user_frags(id); g_HalfDeathsStart[id] = cs_get_user_deaths(id)
     if (g_State == STATE_LIVE && series_extra_number(SC_CLIENT_DEMOS, g_CvarClientDemos)) start_client_demo(id)
 }
