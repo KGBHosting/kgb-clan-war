@@ -138,6 +138,7 @@ new CsTeams:g_KnifeWinningSide
 new g_KnifeStayVotes, g_KnifeSwapVotes
 new bool:g_KnifeVoted[MAX_PLAYERS + 1]
 new g_ForwardEvent
+new g_AnnouncementHud, g_StatusHud
 
 new g_CvarEnabled, g_CvarMinReady, g_CvarReadyMode, g_CvarAutoLive
 new g_CvarDisplayName, g_CvarChatPrefix
@@ -199,6 +200,8 @@ public plugin_init()
     register_plugin(PLUGIN_NAME, PLUGIN_VERSION, PLUGIN_AUTHOR)
     register_dictionary("kgb_clan_war.txt")
     register_cvar("kgb_cw_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
+    g_AnnouncementHud = CreateHudSyncObj()
+    g_StatusHud = CreateHudSyncObj()
 
     g_CvarEnabled = register_cvar("kgb_cw_enabled", "1")
     g_CvarDisplayName = register_cvar("kgb_cw_display_name", DEFAULT_DISPLAY_NAME)
@@ -348,6 +351,8 @@ public plugin_end()
 public client_putinserver(id)
 {
     clear_client_state(id)
+    // Bot private data may not exist yet; half stats and demos are human-only.
+    if (is_user_bot(id) || is_user_hltv(id)) return
     g_HalfKillsStart[id] = get_user_frags(id); g_HalfDeathsStart[id] = cs_get_user_deaths(id)
     if (g_State == STATE_LIVE && series_extra_number(SC_CLIENT_DEMOS, g_CvarClientDemos)) start_client_demo(id)
 }
@@ -1609,9 +1614,9 @@ public task_status_hud()
         {
             if (!is_user_connected(id) || is_user_bot(id) || is_user_hltv(id)) continue
             if (g_State == STATE_WARMUP || g_State == STATE_HALF_READY)
-                show_hudmessage(id, "%s %L", g_ChatPrefix, id, "CW_HUD_READY", ready_count(), required_ready_count())
+                ShowSyncHudMsg(id, g_StatusHud, "%s %L", g_ChatPrefix, id, "CW_HUD_READY", ready_count(), required_ready_count())
             else if (g_State == STATE_LIVE || g_State == STATE_HALFTIME || g_State == STATE_OVERTIME_VOTE || g_State == STATE_PLAYOUT_VOTE)
-                show_hudmessage(id, "%s %L", g_ChatPrefix, id, "CW_HUD_SCORE", g_MapNumber, labelA, g_TeamAScore, g_TeamBScore, labelB)
+                ShowSyncHudMsg(id, g_StatusHud, "%s %L", g_ChatPrefix, id, "CW_HUD_SCORE", g_MapNumber, labelA, g_TeamAScore, g_TeamBScore, labelB)
         }
     }
     schedule_status_hud()
@@ -4310,7 +4315,9 @@ stock announce_ml(const key[], any:...)
         if (series_extra_number(SC_HUD_ANNOUNCEMENTS, g_CvarHudAnnouncements))
         {
             set_hudmessage(0, 180, 255, -1.0, 0.18, 0, 1.0, 4.0, 0.1, 0.2, -1)
-            show_hudmessage(id, "%s %s", g_ChatPrefix, message)
+            // Round/half/match events can share a frame. Replace the previous
+            // announcement instead of stacking channels at the same position.
+            ShowSyncHudMsg(id, g_AnnouncementHud, "%s %s", g_ChatPrefix, message)
         }
     }
     new serverLanguage = LANG_SERVER
